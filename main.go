@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -140,29 +141,39 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	// อ่าน body เป็น JSON
-	var req struct {
-		Username  string `json:"username"`
-		Email     string `json:"email"`
-		Password  string `json:"password"`
-		Role      string `json:"role"`
-		ImageUser string `json:"imageUser"` // Data URL หรือ empty string
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+	// จำกัดขนาดไฟล์ 10 MB
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		http.Error(w, `{"error":"cannot parse form"}`, http.StatusBadRequest)
 		return
 	}
 
-	username := req.Username
-	email := req.Email
-	password := req.Password
-	role := req.Role
+	username := r.FormValue("username")
+	email := r.FormValue("email")
+	password := r.FormValue("password")
+	role := r.FormValue("role")
 	if role == "" {
 		role = "user"
 	}
 
-	// เก็บ imageUser เป็น string โดยตรง (Data URL หรือ empty string)
-	imageData := req.ImageUser
+	// รับไฟล์ avatar
+	var imagePath string
+	file, handler, err := r.FormFile("avatar")
+	if err == nil {
+		defer file.Close()
+		os.MkdirAll("./uploads", os.ModePerm)
+		imagePath = "./uploads/" + handler.Filename
+		dst, err := os.Create(imagePath)
+		if err != nil {
+			http.Error(w, `{"error":"cannot save file"}`, http.StatusInternalServerError)
+			return
+		}
+		defer dst.Close()
+		_, err = io.Copy(dst, file)
+		if err != nil {
+			http.Error(w, `{"error":"cannot save file"}`, http.StatusInternalServerError)
+			return
+		}
+	}
 
 	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -179,29 +190,16 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 	}
 	defer stmt.Close()
 
-	_, err = stmt.Exec(username, email, string(hashedPassword), role, imageData)
+	_, err = stmt.Exec(username, email, string(hashedPassword), role, imagePath)
 	if err != nil {
 		http.Error(w, `{"error":"cannot insert user"}`, http.StatusInternalServerError)
 		return
 	}
 
-	fmt.Println("username:", username)
-	fmt.Println("email:", email)
-	fmt.Println("password:", string(hashedPassword))
-	fmt.Println("role:", role)
-	fmt.Println("imageUser length:", len(imageData))
-
-	_, err = stmt.Exec(username, email, string(hashedPassword), role, imageData)
-	if err != nil {
-		fmt.Println("DB error:", err) // แสดง error จริง
-		http.Error(w, `{"error":"cannot insert user"}`, http.StatusInternalServerError)
-		return
-	}
-
-	// ส่ง response
+	// ส่ง response พร้อม URL ของ avatar
 	json.NewEncoder(w).Encode(map[string]string{
-		"message": "User registered successfully",
-		"image":   imageData, // ส่งกลับ Data URL ด้วย
+		"message":   "User registered successfully",
+		"imageUser": imagePath, // เก็บ path หรือ URL
 	})
 }
 
