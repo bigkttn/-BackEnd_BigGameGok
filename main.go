@@ -137,15 +137,16 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
 	// รับ JSON body
 	var u struct {
-		UID      string `json:"uid"`
-		Username string `json:"username"`
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Role     string `json:"role"`
+		UID       string `json:"uid"`
+		Username  string `json:"username"`
+		Email     string `json:"email"`
+		Password  string `json:"password"`
+		Role      string `json:"role"`
+		ImageUser string `json:"imageUser"` // ✅ รับรูปจาก Angular
 	}
+
 	if err := json.NewDecoder(r.Body).Decode(&u); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -170,15 +171,15 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// INSERT ลงฐานข้อมูล โดยให้ MySQL สร้าง uid อัตโนมัติ
-	stmt, err := db.Prepare("INSERT INTO user (username, email, password, role) VALUES (?, ?, ?, ?)")
+	// INSERT ลงฐานข้อมูล (เพิ่ม imageUser)
+	stmt, err := db.Prepare("INSERT INTO user (username, email, password, role, imageUser) VALUES (?, ?, ?, ?, ?)")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer stmt.Close()
 
-	_, err = stmt.Exec(u.Username, u.Email, string(hashedPassword), u.Role)
+	_, err = stmt.Exec(u.Username, u.Email, string(hashedPassword), u.Role, u.ImageUser)
 	if err != nil {
 		if mysqlErr, ok := err.(*mysql.MySQLError); ok && mysqlErr.Number == 1062 {
 			http.Error(w, "Email already exists", http.StatusBadRequest)
