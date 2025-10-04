@@ -214,47 +214,47 @@ func loginUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// รับ JSON body
+	w.Header().Set("Content-Type", "application/json")
+
 	var input struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
 		return
 	}
 
-	// ดึง user จาก DB ตาม email
-	var hashedPassword string
-	var uid, fullName, role string
-	err := db.QueryRow("SELECT uid, username, password, role FROM user WHERE email = ?", input.Email).Scan(&uid, &fullName, &hashedPassword, &role)
+	var uid, username, hashedPassword, role, imageUser string
+	err := db.QueryRow("SELECT uid, username, password, role, imageUser FROM user WHERE email = ?", input.Email).
+		Scan(&uid, &username, &hashedPassword, &role, &imageUser)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			http.Error(w, "Email not found", http.StatusUnauthorized)
+			http.Error(w, `{"error":"email not found"}`, http.StatusUnauthorized)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
 		return
 	}
 
 	// ตรวจสอบ password
-	err = bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(input.Password))
-	if err != nil {
-		http.Error(w, "Incorrect password", http.StatusUnauthorized)
+	if err := bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(input.Password)); err != nil {
+		http.Error(w, `{"error":"incorrect password"}`, http.StatusUnauthorized)
 		return
 	}
 
 	// Login สำเร็จ
-	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"message":   "Login successful",
 		"uid":       uid,
-		"full_name": fullName,
+		"full_name": username,
 		"email":     input.Email,
 		"role":      role,
+		"imageUser": imageUser,
+		// "token": "optional JWT here"
 	})
-
 }
+
 func helloHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
