@@ -18,11 +18,12 @@ import (
 
 // กำหนดโครงสร้างข้อมูล user (ตรงกับ table user ของคุณ)
 type User struct {
-	UID      string `json:"uid"`
-	FullName string `json:"full_name"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	Role     string `json:"role"`
+	UID       string `json:"uid"`
+	FullName  string `json:"full_name"`
+	Email     string `json:"email"`
+	Password  string `json:"password"`
+	Role      string `json:"role"`
+	ImageUser string `json:"imageUser"` // ✅ เพิ่ม field
 }
 
 var db *sql.DB
@@ -72,7 +73,7 @@ func main() {
 
 // handler ดึงข้อมูล user ทั้งหมด
 func getUsers(w http.ResponseWriter, r *http.Request) {
-	rows, err := db.Query("SELECT uid, username AS full_name, email, password, role FROM user")
+	rows, err := db.Query("SELECT uid, username AS full_name, email, password, role, imageUser FROM user")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -82,7 +83,7 @@ func getUsers(w http.ResponseWriter, r *http.Request) {
 	var users []User
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.UID, &u.FullName, &u.Email, &u.Password, &u.Role); err != nil {
+		if err := rows.Scan(&u.UID, &u.FullName, &u.Email, &u.Password, &u.Role, &u.ImageUser); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
