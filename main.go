@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -11,7 +12,6 @@ import (
 	"os/exec"
 	"runtime"
 
-	"github.com/go-sql-driver/mysql"
 	_ "github.com/go-sql-driver/mysql"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -138,24 +138,22 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	// รับ JSON body
-	var u struct {
-		UID       string `json:"uid"`
-		Username  string `json:"username"`
-		Email     string `json:"email"`
-		Password  string `json:"password"`
-		Role      string `json:"role"`
-		ImageUser string `json:"imageUser"` // ✅ รับรูปจาก Angular
-	}
 
-	if err := json.NewDecoder(r.Body).Decode(&u); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	// Parse multipart form (max 10MB)
+	err := r.ParseMultipartForm(10 << 20)
+	if err != nil {
+		http.Error(w, "Cannot parse form: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	username := r.FormValue("username")
+	email := r.FormValue("email")
+	password := r.FormValue("password")
+	role := r.FormValue("role")
+
 	// ตรวจสอบ email ซ้ำ
 	var exists int
-	err := db.QueryRow("SELECT COUNT(*) FROM user WHERE email = ?", u.Email).Scan(&exists)
+	err = db.QueryRow("SELECT COUNT(*) FROM user WHERE email = ?", email).Scan(&exists)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -166,13 +164,33 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Hash password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(u.Password), bcrypt.DefaultCost)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// INSERT ลงฐานข้อมูล (เพิ่ม imageUser)
+	// Upload avatar file
+	var avatarPath string
+	file, header, err := r.FormFile("avatar")
+	if err == nil {
+		defer file.Close()
+		filename := fmt.Sprintf("uploads/%s", header.Filename)
+		dst, err := os.Create(filename)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer dst.Close()
+		_, err = io.Copy(dst, file)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		avatarPath = filename
+	}
+
+	// INSERT ลงฐานข้อมูล
 	stmt, err := db.Prepare("INSERT INTO user (username, email, password, role, imageUser) VALUES (?, ?, ?, ?, ?)")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -180,12 +198,8 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 	}
 	defer stmt.Close()
 
-	_, err = stmt.Exec(u.Username, u.Email, string(hashedPassword), u.Role, u.ImageUser)
+	_, err = stmt.Exec(username, email, string(hashedPassword), role, avatarPath)
 	if err != nil {
-		if mysqlErr, ok := err.(*mysql.MySQLError); ok && mysqlErr.Number == 1062 {
-			http.Error(w, "Email already exists", http.StatusBadRequest)
-			return
-		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
