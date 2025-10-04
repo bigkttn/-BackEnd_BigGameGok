@@ -255,7 +255,7 @@ func loginUser(w http.ResponseWriter, r *http.Request) {
 		"full_name": username,
 		"email":     input.Email,
 		"role":      role,
-		"imageUser": imageUser,
+		"imageUser": imageUser, // path หรือ URL ของ avatar
 	}
 
 	json.NewEncoder(w).Encode(response)
