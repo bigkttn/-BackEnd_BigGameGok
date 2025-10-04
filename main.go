@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"golang.org/x/crypto/bcrypt"
@@ -161,7 +162,10 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		defer file.Close()
 		os.MkdirAll("./uploads", os.ModePerm)
-		imagePath = "./uploads/" + handler.Filename
+		// imagePath = "./uploads/" + handler.Filename
+		filename := fmt.Sprintf("%d_%s", time.Now().UnixNano(), handler.Filename)
+		imagePath = "./uploads/" + filename
+
 		dst, err := os.Create(imagePath)
 		if err != nil {
 			http.Error(w, `{"error":"cannot save file"}`, http.StatusInternalServerError)
