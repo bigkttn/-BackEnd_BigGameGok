@@ -185,6 +185,19 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fmt.Println("username:", username)
+	fmt.Println("email:", email)
+	fmt.Println("password:", string(hashedPassword))
+	fmt.Println("role:", role)
+	fmt.Println("imageUser length:", len(imageData))
+
+	_, err = stmt.Exec(username, email, string(hashedPassword), role, imageData)
+	if err != nil {
+		fmt.Println("DB error:", err) // แสดง error จริง
+		http.Error(w, `{"error":"cannot insert user"}`, http.StatusInternalServerError)
+		return
+	}
+
 	// ส่ง response
 	json.NewEncoder(w).Encode(map[string]string{
 		"message": "User registered successfully",
