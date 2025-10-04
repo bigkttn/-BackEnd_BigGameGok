@@ -210,12 +210,13 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 // handler สำหรับ login
 func loginUser(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 
+	// อ่าน JSON body
 	var input struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -225,9 +226,13 @@ func loginUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Query user จาก DB
 	var uid, username, hashedPassword, role, imageUser string
-	err := db.QueryRow("SELECT uid, username, password, role, imageUser FROM user WHERE email = ?", input.Email).
-		Scan(&uid, &username, &hashedPassword, &role, &imageUser)
+	err := db.QueryRow(
+		"SELECT uid, username, password, role, imageUser FROM user WHERE email = ?",
+		input.Email,
+	).Scan(&uid, &username, &hashedPassword, &role, &imageUser)
+
 	if err != nil {
 		if err == sql.ErrNoRows {
 			http.Error(w, `{"error":"email not found"}`, http.StatusUnauthorized)
@@ -243,16 +248,17 @@ func loginUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Login สำเร็จ
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	// Login สำเร็จ ส่ง response ตรงกับ LoginResponse
+	response := map[string]interface{}{
 		"message":   "Login successful",
 		"uid":       uid,
 		"full_name": username,
 		"email":     input.Email,
 		"role":      role,
 		"imageUser": imageUser,
-		// "token": "optional JWT here"
-	})
+	}
+
+	json.NewEncoder(w).Encode(response)
 }
 
 func helloHandler(w http.ResponseWriter, r *http.Request) {
