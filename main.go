@@ -139,44 +139,18 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse multipart form (max 10MB)
-	err := r.ParseMultipartForm(10 << 20)
-	if err != nil {
-		http.Error(w, "Cannot parse form: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
+	// อ่าน formData
 	username := r.FormValue("username")
 	email := r.FormValue("email")
 	password := r.FormValue("password")
 	role := r.FormValue("role")
 
-	// ตรวจสอบ email ซ้ำ
-	var exists int
-	err = db.QueryRow("SELECT COUNT(*) FROM user WHERE email = ?", email).Scan(&exists)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if exists > 0 {
-		http.Error(w, "Email already exists", http.StatusBadRequest)
-		return
-	}
-
-	// Hash password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Upload avatar file
-	var avatarPath string
-	file, header, err := r.FormFile("avatar")
-	if err == nil {
+	var imageURL string
+	file, header, err := r.FormFile("imageUser")
+	if err == nil && file != nil {
 		defer file.Close()
-		filename := fmt.Sprintf("uploads/%s", header.Filename)
-		dst, err := os.Create(filename)
+		// เก็บไฟล์ลง server (ตัวอย่างใน /uploads/)
+		dst, err := os.Create("./uploads/" + header.Filename)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -187,10 +161,17 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		avatarPath = filename
+		imageURL = "https://yourserver.com/uploads/" + header.Filename
 	}
 
-	// INSERT ลงฐานข้อมูล
+	// Hash password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// INSERT ลง DB
 	stmt, err := db.Prepare("INSERT INTO user (username, email, password, role, imageUser) VALUES (?, ?, ?, ?, ?)")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -198,7 +179,7 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 	}
 	defer stmt.Close()
 
-	_, err = stmt.Exec(username, email, string(hashedPassword), role, avatarPath)
+	_, err = stmt.Exec(username, email, string(hashedPassword), role, imageURL)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -207,6 +188,7 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
 		"message": "User registered successfully",
+		"image":   imageURL,
 	})
 }
 
