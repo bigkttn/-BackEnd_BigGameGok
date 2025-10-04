@@ -2,7 +2,6 @@ package main
 
 import (
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,8 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"strings"
-	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"golang.org/x/crypto/bcrypt"
@@ -149,7 +146,7 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 		Email     string `json:"email"`
 		Password  string `json:"password"`
 		Role      string `json:"role"`
-		ImageUser string `json:"imageUser"`
+		ImageUser string `json:"imageUser"` // Data URL หรือ empty string
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
@@ -164,29 +161,8 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 		role = "user"
 	}
 
-	var imageURL string
-	if req.ImageUser != "" {
-		// imageUser เป็น Data URL format: "data:image/png;base64,...."
-		parts := strings.SplitN(req.ImageUser, ",", 2)
-		if len(parts) != 2 {
-			http.Error(w, `{"error":"invalid image data"}`, http.StatusBadRequest)
-			return
-		}
-		data, err := base64.StdEncoding.DecodeString(parts[1])
-		if err != nil {
-			http.Error(w, `{"error":"invalid base64 data"}`, http.StatusBadRequest)
-			return
-		}
-
-		// สร้างไฟล์ชื่อสุ่ม
-		filename := fmt.Sprintf("%d.png", time.Now().UnixNano())
-		path := "./uploads/" + filename
-		if err := os.WriteFile(path, data, 0644); err != nil {
-			http.Error(w, `{"error":"cannot save image"}`, http.StatusInternalServerError)
-			return
-		}
-		imageURL = "https://yourserver.com/uploads/" + filename
-	}
+	// เก็บ imageUser เป็น string โดยตรง (Data URL หรือ empty string)
+	imageData := req.ImageUser
 
 	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -203,7 +179,7 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 	}
 	defer stmt.Close()
 
-	_, err = stmt.Exec(username, email, string(hashedPassword), role, imageURL)
+	_, err = stmt.Exec(username, email, string(hashedPassword), role, imageData)
 	if err != nil {
 		http.Error(w, `{"error":"cannot insert user"}`, http.StatusInternalServerError)
 		return
@@ -212,7 +188,7 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 	// ส่ง response
 	json.NewEncoder(w).Encode(map[string]string{
 		"message": "User registered successfully",
-		"image":   imageURL,
+		"image":   imageData, // ส่งกลับ Data URL ด้วย
 	})
 }
 
