@@ -2,15 +2,17 @@ package main
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"golang.org/x/crypto/bcrypt"
@@ -139,53 +141,75 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// อ่าน formData
-	username := r.FormValue("username")
-	email := r.FormValue("email")
-	password := r.FormValue("password")
-	role := r.FormValue("role")
+	w.Header().Set("Content-Type", "application/json")
+
+	// อ่าน body เป็น JSON
+	var req struct {
+		Username  string `json:"username"`
+		Email     string `json:"email"`
+		Password  string `json:"password"`
+		Role      string `json:"role"`
+		ImageUser string `json:"imageUser"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+
+	username := req.Username
+	email := req.Email
+	password := req.Password
+	role := req.Role
+	if role == "" {
+		role = "user"
+	}
 
 	var imageURL string
-	file, header, err := r.FormFile("imageUser")
-	if err == nil && file != nil {
-		defer file.Close()
-		// เก็บไฟล์ลง server (ตัวอย่างใน /uploads/)
-		dst, err := os.Create("./uploads/" + header.Filename)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+	if req.ImageUser != "" {
+		// imageUser เป็น Data URL format: "data:image/png;base64,...."
+		parts := strings.SplitN(req.ImageUser, ",", 2)
+		if len(parts) != 2 {
+			http.Error(w, `{"error":"invalid image data"}`, http.StatusBadRequest)
 			return
 		}
-		defer dst.Close()
-		_, err = io.Copy(dst, file)
+		data, err := base64.StdEncoding.DecodeString(parts[1])
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, `{"error":"invalid base64 data"}`, http.StatusBadRequest)
 			return
 		}
-		imageURL = "https://yourserver.com/uploads/" + header.Filename
+
+		// สร้างไฟล์ชื่อสุ่ม
+		filename := fmt.Sprintf("%d.png", time.Now().UnixNano())
+		path := "./uploads/" + filename
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			http.Error(w, `{"error":"cannot save image"}`, http.StatusInternalServerError)
+			return
+		}
+		imageURL = "https://yourserver.com/uploads/" + filename
 	}
 
 	// Hash password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, `{"error":"cannot hash password"}`, http.StatusInternalServerError)
 		return
 	}
 
 	// INSERT ลง DB
 	stmt, err := db.Prepare("INSERT INTO user (username, email, password, role, imageUser) VALUES (?, ?, ?, ?, ?)")
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
 		return
 	}
 	defer stmt.Close()
 
 	_, err = stmt.Exec(username, email, string(hashedPassword), role, imageURL)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, `{"error":"cannot insert user"}`, http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	// ส่ง response
 	json.NewEncoder(w).Encode(map[string]string{
 		"message": "User registered successfully",
 		"image":   imageURL,
