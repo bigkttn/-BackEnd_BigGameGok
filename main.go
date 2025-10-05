@@ -52,6 +52,7 @@ func main() {
 	http.HandleFunc("/register", withCORS(registerUser))
 	http.HandleFunc("/login", withCORS(loginUser))
 	http.HandleFunc("/hello", withCORS(helloHandler))
+	http.HandleFunc("/userbyuid", withCORS(getUserByUid))
 
 	// หา IP ของเครื่อง
 	ip := getLocalIP()
@@ -298,4 +299,32 @@ func withCORS(h http.HandlerFunc) http.HandlerFunc {
 
 		h.ServeHTTP(w, r)
 	}
+}
+
+// handler ดึงข้อมูลผู้ใช้ตาม UID
+func getUserByUid(w http.ResponseWriter, r *http.Request) {
+	// รับ uid จาก query parameter ?uid=xxx
+	uid := r.URL.Query().Get("uid")
+	if uid == "" {
+		http.Error(w, `{"error":"uid is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	var user User
+	err := db.QueryRow(
+		"SELECT uid, username AS full_name, email, role, imageUser FROM user WHERE uid = ?",
+		uid,
+	).Scan(&user.UID, &user.FullName, &user.Email, &user.Role, &user.ImageUser)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, `{"error":"user not found"}`, http.StatusNotFound)
+			return
+		}
+		http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
 }
