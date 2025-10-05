@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -13,6 +12,8 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/cloudinary/cloudinary-go/v2"              // ✅ import Cloudinary
+	"github.com/cloudinary/cloudinary-go/v2/api/uploader" // ✅ import uploader
 	_ "github.com/go-sql-driver/mysql"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -139,7 +140,6 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 
 	// จำกัดขนาดไฟล์ 10 MB
@@ -156,27 +156,33 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 		role = "user"
 	}
 
-	// รับไฟล์ avatar
-	var imagePath string
+	// ===== Upload avatar to Cloudinary =====
+	var imageURL string
 	file, handler, err := r.FormFile("avatar")
 	if err == nil {
 		defer file.Close()
-		os.MkdirAll("./uploads", os.ModePerm)
-		// imagePath = "./uploads/" + handler.Filename
-		filename := fmt.Sprintf("%d_%s", time.Now().UnixNano(), handler.Filename)
-		imagePath = "./uploads/" + filename
 
-		dst, err := os.Create(imagePath)
+		// สร้าง Cloudinary instance จาก ENV
+		cld, _ := cloudinary.NewFromParams(
+			os.Getenv("CLOUDINARY_CLOUD_NAME"),
+			os.Getenv("CLOUDINARY_API_KEY"),
+			os.Getenv("CLOUDINARY_API_SECRET"),
+		)
+
+		// สร้างชื่อไฟล์ unique
+		publicID := fmt.Sprintf("%d_%s", time.Now().UnixNano(), handler.Filename)
+
+		// อัปโหลดไฟล์
+		uploadRes, err := cld.Upload.Upload(r.Context(), file, uploader.UploadParams{
+			PublicID: publicID,
+			Folder:   "avatars", // โฟลเดอร์ใน Cloudinary
+		})
 		if err != nil {
-			http.Error(w, `{"error":"cannot save file"}`, http.StatusInternalServerError)
+			http.Error(w, `{"error":"cannot upload to cloudinary"}`, http.StatusInternalServerError)
 			return
 		}
-		defer dst.Close()
-		_, err = io.Copy(dst, file)
-		if err != nil {
-			http.Error(w, `{"error":"cannot save file"}`, http.StatusInternalServerError)
-			return
-		}
+
+		imageURL = uploadRes.SecureURL // ได้ URL ของไฟล์ที่ Cloudinary
 	}
 
 	// Hash password
@@ -186,7 +192,7 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// INSERT ลง DB
+	// INSERT ลง DB (เก็บ URL ไม่ใช่ path local)
 	stmt, err := db.Prepare("INSERT INTO user (username, email, password, role, imageUser) VALUES (?, ?, ?, ?, ?)")
 	if err != nil {
 		http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
@@ -194,16 +200,16 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 	}
 	defer stmt.Close()
 
-	_, err = stmt.Exec(username, email, string(hashedPassword), role, imagePath)
+	_, err = stmt.Exec(username, email, string(hashedPassword), role, imageURL)
 	if err != nil {
 		http.Error(w, `{"error":"cannot insert user"}`, http.StatusInternalServerError)
 		return
 	}
 
-	// ส่ง response พร้อม URL ของ avatar
+	// ส่ง response กลับ
 	json.NewEncoder(w).Encode(map[string]string{
 		"message":   "User registered successfully",
-		"imageUser": imagePath, // เก็บ path หรือ URL
+		"imageUser": imageURL,
 	})
 }
 
