@@ -163,27 +163,24 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		defer file.Close()
 
-		// สร้าง Cloudinary instance จาก ENV
 		cld, _ := cloudinary.NewFromParams(
 			os.Getenv("CLOUDINARY_CLOUD_NAME"),
 			os.Getenv("CLOUDINARY_API_KEY"),
 			os.Getenv("CLOUDINARY_API_SECRET"),
 		)
 
-		// สร้างชื่อไฟล์ unique
 		publicID := fmt.Sprintf("%d_%s", time.Now().UnixNano(), handler.Filename)
 
-		// อัปโหลดไฟล์
 		uploadRes, err := cld.Upload.Upload(r.Context(), file, uploader.UploadParams{
 			PublicID: publicID,
-			Folder:   "avatars", // โฟลเดอร์ใน Cloudinary
+			Folder:   "avatars",
 		})
 		if err != nil {
 			http.Error(w, `{"error":"cannot upload to cloudinary"}`, http.StatusInternalServerError)
 			return
 		}
 
-		imageURL = uploadRes.SecureURL // ได้ URL ของไฟล์ที่ Cloudinary
+		imageURL = uploadRes.SecureURL
 	}
 
 	// Hash password
@@ -193,7 +190,7 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// INSERT ลง DB (เก็บ URL ไม่ใช่ path local)
+	// INSERT ลง DB
 	stmt, err := db.Prepare("INSERT INTO user (username, email, password, role, imageUser) VALUES (?, ?, ?, ?, ?)")
 	if err != nil {
 		http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
@@ -201,17 +198,31 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 	}
 	defer stmt.Close()
 
-	_, err = stmt.Exec(username, email, string(hashedPassword), role, imageURL)
+	res, err := stmt.Exec(username, email, string(hashedPassword), role, imageURL)
 	if err != nil {
 		http.Error(w, `{"error":"cannot insert user"}`, http.StatusInternalServerError)
 		return
 	}
 
-	// ส่ง response กลับ
-	json.NewEncoder(w).Encode(map[string]string{
-		"message":   "User registered successfully",
+	// ดึง UID ของผู้ใช้ที่เพิ่งสร้าง
+	userID, err := res.LastInsertId()
+	if err != nil {
+		http.Error(w, `{"error":"cannot get user id"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// สร้าง response object
+	user := map[string]interface{}{
+		"uid":       fmt.Sprintf("%d", userID),
+		"username":  username,
+		"email":     email,
+		"role":      role,
 		"imageUser": imageURL,
-	})
+	}
+
+	// ส่ง JSON response
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
 }
 
 // handler สำหรับ login
