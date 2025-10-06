@@ -53,7 +53,7 @@ func main() {
 	http.HandleFunc("/login", withCORS(loginUser))
 	http.HandleFunc("/hello", withCORS(helloHandler))
 	http.HandleFunc("/userbyuid", withCORS(getUserByUid))
-
+	http.HandleFunc("/editprofile", withCORS(editProfile))
 	// หา IP ของเครื่อง
 	ip := getLocalIP()
 	// url := fmt.Sprintf("http://%s:8080/user", ip)
@@ -338,4 +338,89 @@ func getUserByUid(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(user)
+}
+
+// handler สำหรับแก้ไขโปรไฟล์
+func editProfile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut && r.Method != http.MethodPost {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	// จำกัดขนาดไฟล์ 10 MB
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		http.Error(w, `{"error":"cannot parse form"}`, http.StatusBadRequest)
+		return
+	}
+
+	uid := r.FormValue("uid")
+	fullName := r.FormValue("full_name")
+	email := r.FormValue("email")
+	role := r.FormValue("role")
+
+	// ===== Upload avatar ใหม่ถ้ามี =====
+	var imageURL string
+	file, _, err := r.FormFile("avatar")
+	if err == nil {
+		defer file.Close()
+
+		cld, _ := cloudinary.NewFromParams(
+			os.Getenv("CLOUDINARY_CLOUD_NAME"),
+			os.Getenv("CLOUDINARY_API_KEY"),
+			os.Getenv("CLOUDINARY_API_SECRET"),
+		)
+
+		publicID := fmt.Sprintf("avatar_%s_%d", uid, time.Now().UnixNano())
+		overwrite := true
+
+		uploadRes, err := cld.Upload.Upload(r.Context(), file, uploader.UploadParams{
+			PublicID:  publicID,
+			Folder:    "avatars",
+			Overwrite: &overwrite,
+		})
+		if err != nil {
+			http.Error(w, `{"error":"cannot upload avatar"}`, http.StatusInternalServerError)
+			return
+		}
+		imageURL = uploadRes.SecureURL
+	}
+
+	// ===== Update DB =====
+	// ถ้าไม่มีรูปใหม่ ให้คงค่าเดิม
+	query := "UPDATE user SET username=?, email=?, role=?"
+	args := []interface{}{fullName, email, role}
+
+	if imageURL != "" {
+		query += ", imageUser=?"
+		args = append(args, imageURL)
+	}
+
+	query += " WHERE uid=?"
+	args = append(args, uid)
+
+	stmt, err := db.Prepare(query)
+	if err != nil {
+		http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
+		return
+	}
+	defer stmt.Close()
+
+	_, err = stmt.Exec(args...)
+	if err != nil {
+		http.Error(w, `{"error":"cannot update user"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// ส่ง response กลับ
+	response := map[string]interface{}{
+		"message":   "Profile updated successfully",
+		"uid":       uid,
+		"full_name": fullName,
+		"email":     email,
+		"role":      role,
+		"imageUser": imageURL,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
