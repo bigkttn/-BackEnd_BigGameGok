@@ -286,25 +286,35 @@ func helloHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ใส่ไว้บนๆ ของไฟล์
+// withCORS ปรับปรุงให้รองรับหลาย origin
 func withCORS(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 
-		// อนุญาตต้นทางจาก Angular dev server
-		if origin == "http://localhost:4200" {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Vary", "Origin")
-			// ถ้าจะใช้ cookie/credentials ให้เปิดบรรทัดนี้และอย่าใช้ "*" เป็น origin
-			// w.Header().Set("Access-Control-Allow-Credentials", "true")
+		// whitelist origins ที่อนุญาต
+		allowedOrigins := []string{
+			"http://localhost:4200",
+			"http://localhost:3000",
+			"http://localhost:51560",
+			"https://your-frontend-domain.com", // ใส่ domain ของ frontend production ตรงนี้
 		}
 
+		// ตรวจสอบว่า origin ที่ส่งมาถูก whitelist ไว้หรือไม่
+		for _, o := range allowedOrigins {
+			if origin == o {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Vary", "Origin")
+				break
+			}
+		}
+
+		// กำหนด method และ header ที่อนุญาต
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
-		// ตอบ preflight ทันที
+		// ตอบ preflight request
 		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent) // 204
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 
