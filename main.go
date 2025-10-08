@@ -54,7 +54,8 @@ func main() {
 	http.HandleFunc("/hello", withCORS(helloHandler))
 	http.HandleFunc("/userbyuid", withCORS(getUserByUid))
 	http.HandleFunc("/editprofile", withCORS(editProfile))
-	http.HandleFunc("/games", withCORS(getGames)) // ✅ เพิ่มบรรทัดนี้
+	http.HandleFunc("/games", withCORS(getGames))        // ✅ เพิ่มบรรทัดนี้
+	http.HandleFunc("/deletegame", withCORS(deleteGame)) // ✅ Changed from "/games/"
 
 	// หา IP ของเครื่อง
 	ip := getLocalIP()
@@ -478,4 +479,50 @@ func getGames(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(games)
+}
+
+// handler to delete a game by its ID (updated for new endpoint)
+func deleteGame(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	// ✅ Get the game_id from a query parameter, e.g., /deletegame?id=12
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, `{"error":"Query parameter 'id' is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// The rest of the function remains the same
+	stmt, err := db.Prepare("DELETE FROM game WHERE game_id = ?")
+	if err != nil {
+		http.Error(w, `{"error":"Database error preparing statement"}`, http.StatusInternalServerError)
+		return
+	}
+	defer stmt.Close()
+
+	res, err := stmt.Exec(id)
+	if err != nil {
+		http.Error(w, `{"error":"Failed to execute deletion"}`, http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		http.Error(w, `{"error":"Failed to check affected rows"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if rowsAffected == 0 {
+		http.Error(w, `{"error":"Game not found with the given ID"}`, http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": fmt.Sprintf("Game with ID %s deleted successfully", id),
+	})
 }
