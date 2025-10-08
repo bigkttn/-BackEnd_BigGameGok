@@ -57,6 +57,7 @@ func main() {
 	http.HandleFunc("/editprofile", withCORS(editProfile))
 	http.HandleFunc("/games", withCORS(getGames))        // ✅ เพิ่มบรรทัดนี้
 	http.HandleFunc("/deletegame", withCORS(deleteGame)) // ✅ Changed from "/games/"
+	http.HandleFunc("/addGame", withCORS(addGame))
 
 	// หา IP ของเครื่อง
 	ip := getLocalIP()
