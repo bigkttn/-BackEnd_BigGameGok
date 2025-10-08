@@ -58,6 +58,7 @@ func main() {
 	http.HandleFunc("/games", withCORS(getGames))        // ✅ เพิ่มบรรทัดนี้
 	http.HandleFunc("/deletegame", withCORS(deleteGame)) // ✅ Changed from "/games/"
 	http.HandleFunc("/addGame", withCORS(addGame))
+	http.HandleFunc("/gametypes", withCORS(getGameTypes))
 
 	// หา IP ของเครื่อง
 	ip := getLocalIP()
@@ -626,4 +627,51 @@ func addGame(w http.ResponseWriter, r *http.Request) {
 		"message": "Game added successfully",
 		"game_id": newID,
 	})
+}
+
+type GameType struct {
+	TypeID   int    `json:"type_id"`
+	TypeName string `json:"type_name"`
+}
+
+// ✅ 2. Create the handler function to get all game types
+func getGameTypes(w http.ResponseWriter, r *http.Request) {
+	// Only allow GET requests
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Query the 'type' table from your database
+	rows, err := db.Query("SELECT type_id, type_name FROM type ORDER BY type_id ASC")
+	if err != nil {
+		http.Error(w, `{"error":"Database query error"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	// Create a slice to hold the results
+	var gameTypes []GameType
+
+	// Loop through the rows
+	for rows.Next() {
+		var gt GameType
+		// Scan the data from each row into the GameType struct
+		if err := rows.Scan(&gt.TypeID, &gt.TypeName); err != nil {
+			http.Error(w, `{"error":"Failed to scan row"}`, http.StatusInternalServerError)
+			return
+		}
+		// Add the struct to our slice
+		gameTypes = append(gameTypes, gt)
+	}
+
+	// Check for any errors during the loop
+	if err = rows.Err(); err != nil {
+		http.Error(w, `{"error":"Error iterating over rows"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Encode the slice into JSON and send it as the response
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(gameTypes)
 }
