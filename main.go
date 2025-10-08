@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/cloudinary/cloudinary-go/v2"              // ✅ import Cloudinary
@@ -524,5 +525,104 @@ func deleteGame(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{
 		"message": fmt.Sprintf("Game with ID %s deleted successfully", id),
+	})
+}
+
+// This struct is for creating a new game (omits GameID)
+type NewGame struct {
+	GameName    string  `json:"game_name"`
+	Price       float64 `json:"price"`
+	Image       *string `json:"image"`
+	Description *string `json:"description"`
+	ReleaseDate *string `json:"release_date"`
+	TypeID      int     `json:"type_id"`
+	UserID      int     `json:"user_id"`
+}
+
+// handler to add a new game (with image upload)
+func addGame(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	// ✅ 1. Parse multipart form data (max 10MB)
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		http.Error(w, `{"error":"cannot parse form"}`, http.StatusBadRequest)
+		return
+	}
+
+	// ✅ 2. Get form values as strings
+	gameName := r.FormValue("game_name")
+	priceStr := r.FormValue("price")
+	description := r.FormValue("description")
+	releaseDate := r.FormValue("release_date")
+	typeIDStr := r.FormValue("type_id")
+	userIDStr := r.FormValue("user_id")
+
+	// ✅ 3. Convert string values to correct types
+	price, err := strconv.ParseFloat(priceStr, 64)
+	if err != nil {
+		http.Error(w, `{"error":"invalid price format"}`, http.StatusBadRequest)
+		return
+	}
+	typeID, err := strconv.Atoi(typeIDStr)
+	if err != nil {
+		http.Error(w, `{"error":"invalid type_id format"}`, http.StatusBadRequest)
+		return
+	}
+	userID, err := strconv.Atoi(userIDStr)
+	if err != nil {
+		http.Error(w, `{"error":"invalid user_id format"}`, http.StatusBadRequest)
+		return
+	}
+
+	// ✅ 4. Upload image to Cloudinary (if it exists)
+	var imageURL string
+	file, handler, err := r.FormFile("image") // Use "image" as the field name
+	if err == nil {                           // A file was included
+		defer file.Close()
+		cld, _ := cloudinary.NewFromParams(
+			os.Getenv("CLOUDINARY_CLOUD_NAME"),
+			os.Getenv("CLOUDINARY_API_KEY"),
+			os.Getenv("CLOUDINARY_API_SECRET"),
+		)
+		publicID := fmt.Sprintf("game_%s_%d", handler.Filename, time.Now().UnixNano())
+		uploadRes, err := cld.Upload.Upload(r.Context(), file, uploader.UploadParams{
+			PublicID: publicID,
+			Folder:   "games", // Store in a "games" folder
+		})
+		if err != nil {
+			http.Error(w, `{"error":"cannot upload image to cloudinary"}`, http.StatusInternalServerError)
+			return
+		}
+		imageURL = uploadRes.SecureURL
+	}
+
+	// ✅ 5. Insert into the database
+	stmt, err := db.Prepare("INSERT INTO game(game_name, price, image, description, release_date, type_id, user_id) VALUES(?, ?, ?, ?, ?, ?, ?)")
+	if err != nil {
+		http.Error(w, `{"error":"database error preparing statement"}`, http.StatusInternalServerError)
+		return
+	}
+	defer stmt.Close()
+
+	res, err := stmt.Exec(gameName, price, imageURL, description, releaseDate, typeID, userID)
+	if err != nil {
+		http.Error(w, `{"error":"failed to insert game"}`, http.StatusInternalServerError)
+		return
+	}
+
+	newID, err := res.LastInsertId()
+	if err != nil {
+		http.Error(w, `{"error":"failed to retrieve last insert ID"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": "Game added successfully",
+		"game_id": newID,
 	})
 }
