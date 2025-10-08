@@ -58,7 +58,7 @@ func main() {
 	http.HandleFunc("/games", withCORS(getGames))        // ✅ เพิ่มบรรทัดนี้
 	http.HandleFunc("/deletegame", withCORS(deleteGame)) // ✅ Changed from "/games/"
 	http.HandleFunc("/addGame", withCORS(addGame))
-	http.HandleFunc("/gametypes", withCORS(getGameTypes))
+	http.HandleFunc("/typegames", withCORS(getTypeGames))
 
 	// หา IP ของเครื่อง
 	ip := getLocalIP()
@@ -629,49 +629,41 @@ func addGame(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-type GameType struct {
+type TypeGame struct {
 	TypeID   int    `json:"type_id"`
 	TypeName string `json:"type_name"`
 }
 
-// ✅ 2. Create the handler function to get all game types
-func getGameTypes(w http.ResponseWriter, r *http.Request) {
-	// Only allow GET requests
+// ✅ 2. Handler function to get all game types from the 'typegame' table
+func getTypeGames(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Query the 'type' table from your database
-	rows, err := db.Query("SELECT type_id, type_name FROM type ORDER BY type_id ASC")
+	// ✅ The only change is here: "FROM type" becomes "FROM typegame"
+	rows, err := db.Query("SELECT type_id, type_name FROM typegame ORDER BY type_id ASC")
 	if err != nil {
 		http.Error(w, `{"error":"Database query error"}`, http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
-	// Create a slice to hold the results
-	var gameTypes []GameType
-
-	// Loop through the rows
+	var typeGames []TypeGame
 	for rows.Next() {
-		var gt GameType
-		// Scan the data from each row into the GameType struct
-		if err := rows.Scan(&gt.TypeID, &gt.TypeName); err != nil {
+		var tg TypeGame
+		if err := rows.Scan(&tg.TypeID, &tg.TypeName); err != nil {
 			http.Error(w, `{"error":"Failed to scan row"}`, http.StatusInternalServerError)
 			return
 		}
-		// Add the struct to our slice
-		gameTypes = append(gameTypes, gt)
+		typeGames = append(typeGames, tg)
 	}
 
-	// Check for any errors during the loop
 	if err = rows.Err(); err != nil {
 		http.Error(w, `{"error":"Error iterating over rows"}`, http.StatusInternalServerError)
 		return
 	}
 
-	// Encode the slice into JSON and send it as the response
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(gameTypes)
+	json.NewEncoder(w).Encode(typeGames)
 }
