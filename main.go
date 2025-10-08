@@ -54,6 +54,8 @@ func main() {
 	http.HandleFunc("/hello", withCORS(helloHandler))
 	http.HandleFunc("/userbyuid", withCORS(getUserByUid))
 	http.HandleFunc("/editprofile", withCORS(editProfile))
+	http.HandleFunc("/games", withCORS(getGames)) // ✅ เพิ่มบรรทัดนี้
+
 	// หา IP ของเครื่อง
 	ip := getLocalIP()
 	// url := fmt.Sprintf("http://%s:8080/user", ip)
@@ -433,4 +435,47 @@ func editProfile(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// กำหนดโครงสร้างข้อมูล game (ตรงกับ table game ของคุณ)
+type Game struct {
+	GameID      int     `json:"game_id"`
+	GameName    string  `json:"game_name"`
+	Price       float64 `json:"price"`
+	Image       *string `json:"image"` // ใช้ pointer (*string) เพราะค่าอาจเป็น NULL
+	Description *string `json:"description"`
+	ReleaseDate *string `json:"release_date"`
+	Sold        *int    `json:"sold"`
+	TypeID      *int    `json:"type_id"`
+	UserID      *int    `json:"user_id"`
+}
+
+// handler ดึงข้อมูล game ทั้งหมด
+func getGames(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query("SELECT game_id, game_name, price, image, description, release_date, sold, type_id, user_id FROM game")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var games []Game
+	for rows.Next() {
+		var g Game
+		// เนื่องจากบาง field อาจเป็น NULL เราจึงใช้ pointer ในการ Scan
+		if err := rows.Scan(&g.GameID, &g.GameName, &g.Price, &g.Image, &g.Description, &g.ReleaseDate, &g.Sold, &g.TypeID, &g.UserID); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		games = append(games, g)
+	}
+
+	// ตรวจสอบ error ที่อาจเกิดขึ้นระหว่างวนลูป
+	if err = rows.Err(); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(games)
 }
