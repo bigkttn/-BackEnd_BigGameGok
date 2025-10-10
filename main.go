@@ -63,6 +63,8 @@ func main() {
 	http.HandleFunc("/editgame", withCORS(editGame))           // สำหรับอัปเดตเกม
 	http.HandleFunc("/wallet/add", withCORS(addFundsToWallet)) // เพิ่มเงินเข้ากระเป๋า
 	http.HandleFunc("/wallet", withCORS(getWalletByUserID))    // ดึงข้อมูลเงินในกระเป๋าตาม user_id
+	http.HandleFunc("/wallet-history", withCORS(getWalletHistory))
+
 	// หา IP ของเครื่อง
 	ip := getLocalIP()
 	// url := fmt.Sprintf("http://%s:8080/user", ip)
@@ -941,4 +943,51 @@ func getWalletByUserID(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(wallet)
+}
+
+type WalletHistory struct {
+	HID    int     `json:"hid"`
+	Date   string  `json:"date"`
+	Amount float64 `json:"amount"`
+	WID    int     `json:"wid"`
+}
+
+func getWalletHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		http.Error(w, `{"error":"Query parameter 'user_id' is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	query := `
+		SELECT h.hid, DATE_FORMAT(h.date, '%Y-%m-%d'), h.amount, h.wid
+		FROM historywallet h
+		JOIN wallet w ON h.wid = w.wid
+		WHERE w.user_id = ?
+		ORDER BY h.date DESC, h.hid DESC
+	`
+	rows, err := db.Query(query, userID)
+	if err != nil {
+		http.Error(w, `{"error":"Database query error"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var history []WalletHistory
+	for rows.Next() {
+		var item WalletHistory
+		if err := rows.Scan(&item.HID, &item.Date, &item.Amount, &item.WID); err != nil {
+			http.Error(w, `{"error":"Failed to scan row"}`, http.StatusInternalServerError)
+			return
+		}
+		history = append(history, item)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(history)
 }
