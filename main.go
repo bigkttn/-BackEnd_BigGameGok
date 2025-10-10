@@ -59,8 +59,10 @@ func main() {
 	http.HandleFunc("/deletegame", withCORS(deleteGame)) // ✅ Changed from "/games/"
 	http.HandleFunc("/addGame", withCORS(addGame))
 	http.HandleFunc("/typegames", withCORS(getTypeGames))
-	http.HandleFunc("/game", withCORS(getGameByID))  // สำหรับดึงเกมเดียว
-	http.HandleFunc("/editgame", withCORS(editGame)) // สำหรับอัปเดตเกม
+	http.HandleFunc("/game", withCORS(getGameByID))            // สำหรับดึงเกมเดียว
+	http.HandleFunc("/editgame", withCORS(editGame))           // สำหรับอัปเดตเกม
+	http.HandleFunc("/wallet/add", withCORS(addFundsToWallet)) // เพิ่มเงินเข้ากระเป๋า
+	http.HandleFunc("/wallet", withCORS(getWalletByUserID))    // ดึงข้อมูลเงินในกระเป๋าตาม user_id
 	// หา IP ของเครื่อง
 	ip := getLocalIP()
 	// url := fmt.Sprintf("http://%s:8080/user", ip)
@@ -817,4 +819,126 @@ func editGame(w http.ResponseWriter, r *http.Request) {
 		"message": "Game updated successfully",
 		"game_id": gameID,
 	})
+}
+
+// AddFundsRequest defines the structure for the JSON body of the add funds request
+type AddFundsRequest struct {
+	UserID int     `json:"user_id"`
+	Amount float64 `json:"amount"`
+}
+type Wallet struct {
+	WID    int     `json:"wid"`
+	Cash   float64 `json:"cash"`
+	UserID int     `json:"user_id"`
+}
+
+// addFundsToWallet handles adding funds to a user's wallet
+func addFundsToWallet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 1. อ่านข้อมูล JSON จาก request body
+	var req AddFundsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	// ตรวจสอบว่าจำนวนเงินที่ส่งมาถูกต้อง
+	if req.Amount <= 0 {
+		http.Error(w, `{"error":"Amount must be positive"}`, http.StatusBadRequest)
+		return
+	}
+
+	// 2. เริ่มต้น Transaction
+	tx, err := db.Begin()
+	if err != nil {
+		http.Error(w, `{"error":"Cannot start transaction"}`, http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	// 3. ค้นหา wallet ID (wid) จาก user_id
+	var wid int
+	err = tx.QueryRow("SELECT wid FROM wallet WHERE user_id = ?", req.UserID).Scan(&wid)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, `{"error":"Wallet for the given user not found"}`, http.StatusNotFound)
+			return
+		}
+		http.Error(w, `{"error":"Database error finding wallet"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// 4. อัปเดตยอดเงินในตาราง wallet
+	_, err = tx.Exec("UPDATE wallet SET cash = cash + ? WHERE wid = ?", req.Amount, wid)
+	if err != nil {
+		http.Error(w, `{"error":"Failed to update wallet balance"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// 5. เพิ่มประวัติการทำธุรกรรม (เวอร์ชันแก้ไข)
+	// ✅ 1. แก้ไข SQL: เอาคอลัมน์ hid ออก
+	historyStmt, err := tx.Prepare("INSERT INTO historywallet (date, amount, wid) VALUES (?, ?, ?)")
+	if err != nil {
+		http.Error(w, `{"error":"Failed to prepare history statement"}`, http.StatusInternalServerError)
+		return
+	}
+	defer historyStmt.Close()
+
+	currentDate := time.Now().Format("2006-01-02")
+	// ✅ 2. แก้ไข Exec: เอา parameter ของ hid (Unix timestamp) ออก
+	_, err = historyStmt.Exec(currentDate, req.Amount, wid)
+	if err != nil {
+		http.Error(w, `{"error":"Failed to insert into historywallet"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// 6. ถ้าทุกอย่างสำเร็จ ให้ Commit Transaction
+	if err := tx.Commit(); err != nil {
+		http.Error(w, `{"error":"Failed to commit transaction"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// 7. ส่ง Response กลับไป
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":      "Funds added successfully",
+		"user_id":      req.UserID,
+		"added_amount": req.Amount,
+	})
+}
+
+// getWalletByUserID handles fetching wallet data for a specific user
+func getWalletByUserID(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	// รับ user_id จาก query parameter e.g., /wallet?user_id=1
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		http.Error(w, `{"error":"Query parameter 'user_id' is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	var wallet Wallet
+	// Query ข้อมูลจากตาราง wallet โดยใช้ user_id
+	err := db.QueryRow("SELECT wid, cash, user_id FROM wallet WHERE user_id = ?", userID).Scan(&wallet.WID, &wallet.Cash, &wallet.UserID)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, `{"error":"Wallet not found for this user"}`, http.StatusNotFound)
+			return
+		}
+		http.Error(w, `{"error":"Database error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(wallet)
 }
