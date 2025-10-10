@@ -59,7 +59,8 @@ func main() {
 	http.HandleFunc("/deletegame", withCORS(deleteGame)) // ✅ Changed from "/games/"
 	http.HandleFunc("/addGame", withCORS(addGame))
 	http.HandleFunc("/typegames", withCORS(getTypeGames))
-
+	http.HandleFunc("/game", withCORS(getGameByID))  // สำหรับดึงเกมเดียว
+	http.HandleFunc("/editgame", withCORS(editGame)) // สำหรับอัปเดตเกม
 	// หา IP ของเครื่อง
 	ip := getLocalIP()
 	// url := fmt.Sprintf("http://%s:8080/user", ip)
@@ -682,4 +683,138 @@ func getTypeGames(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(typeGames)
+}
+
+// handler ดึงข้อมูลเกมเดียวตาม ID
+func getGameByID(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	// รับ game_id จาก query parameter e.g., /game?id=1
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, `{"error":"Query parameter 'id' is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	var g Game
+	// ใช้ QueryRow เพราะเราคาดหวังผลลัพธ์แค่แถวเดียว
+	err := db.QueryRow("SELECT game_id, game_name, price, image, description, release_date, sold, type_id, user_id FROM game WHERE game_id = ?", id).Scan(&g.GameID, &g.GameName, &g.Price, &g.Image, &g.Description, &g.ReleaseDate, &g.Sold, &g.TypeID, &g.UserID)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// ถ้าไม่เจอเกม ID นี้ในระบบ
+			http.Error(w, `{"error":"Game not found"}`, http.StatusNotFound)
+			return
+		}
+		// Error อื่นๆ
+		http.Error(w, `{"error":"Database error"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(g)
+}
+
+// handler สำหรับแก้ไขข้อมูลเกม
+func editGame(w http.ResponseWriter, r *http.Request) {
+	// ใช้ Method PUT สำหรับการอัปเดตข้อมูล
+	if r.Method != http.MethodPut {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 1. Parse multipart form data (เผื่อมีการอัปโหลดรูปใหม่)
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		http.Error(w, `{"error":"cannot parse form"}`, http.StatusBadRequest)
+		return
+	}
+
+	// 2. ดึงค่าจากฟอร์มที่ส่งมา
+	gameIDStr := r.FormValue("game_id")
+	gameName := r.FormValue("game_name")
+	priceStr := r.FormValue("price")
+	description := r.FormValue("description")
+	typeIDStr := r.FormValue("type_id")
+
+	// 3. แปลงค่าที่จำเป็นให้เป็นตัวเลข
+	gameID, err := strconv.Atoi(gameIDStr)
+	if err != nil {
+		http.Error(w, `{"error":"invalid game_id format"}`, http.StatusBadRequest)
+		return
+	}
+	price, err := strconv.ParseFloat(priceStr, 64)
+	if err != nil {
+		http.Error(w, `{"error":"invalid price format"}`, http.StatusBadRequest)
+		return
+	}
+	typeID, err := strconv.Atoi(typeIDStr)
+	if err != nil {
+		http.Error(w, `{"error":"invalid type_id format"}`, http.StatusBadRequest)
+		return
+	}
+
+	// 4. ตรวจสอบและอัปโหลดรูปใหม่ (ถ้ามี)
+	var newImageURL string
+	file, _, err := r.FormFile("image")
+	if err == nil { // ถ้ามีไฟล์ใหม่ถูกส่งมาด้วย
+		defer file.Close()
+		cld, _ := cloudinary.NewFromParams(
+			os.Getenv("CLOUDINARY_CLOUD_NAME"),
+			os.Getenv("CLOUDINARY_API_KEY"),
+			os.Getenv("CLOUDINARY_API_SECRET"),
+		)
+		publicID := fmt.Sprintf("game_updated_%d_%d", gameID, time.Now().UnixNano())
+		uploadRes, err := cld.Upload.Upload(r.Context(), file, uploader.UploadParams{
+			PublicID: publicID,
+			Folder:   "games",
+		})
+		if err != nil {
+			http.Error(w, `{"error":"cannot upload new image"}`, http.StatusInternalServerError)
+			return
+		}
+		newImageURL = uploadRes.SecureURL
+	}
+
+	// 5. สร้างคำสั่ง SQL แบบ Dynamic
+	query := "UPDATE game SET game_name=?, price=?, description=?, type_id=?"
+	args := []interface{}{gameName, price, description, typeID}
+
+	if newImageURL != "" {
+		query += ", image=?"
+		args = append(args, newImageURL)
+	}
+
+	query += " WHERE game_id=?"
+	args = append(args, gameID)
+
+	// 6. Execute คำสั่ง SQL
+	stmt, err := db.Prepare(query)
+	if err != nil {
+		http.Error(w, `{"error":"database error preparing statement"}`, http.StatusInternalServerError)
+		return
+	}
+	defer stmt.Close()
+
+	res, err := stmt.Exec(args...)
+	if err != nil {
+		http.Error(w, `{"error":"failed to update game"}`, http.StatusInternalServerError)
+		return
+	}
+
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected == 0 {
+		http.Error(w, `{"error":"game not found with the given id"}`, http.StatusNotFound)
+		return
+	}
+
+	// 7. ส่ง Response กลับไป
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": "Game updated successfully",
+		"game_id": gameID,
+	})
 }
