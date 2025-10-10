@@ -196,7 +196,7 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// INSERT ลง DB
+	// INSERT ลง DB (user)
 	stmt, err := db.Prepare("INSERT INTO user (username, email, password, role, imageUser) VALUES (?, ?, ?, ?, ?)")
 	if err != nil {
 		http.Error(w, `{"error":"database error"}`, http.StatusInternalServerError)
@@ -217,6 +217,23 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// สร้าง wallet เริ่มต้นสำหรับผู้ใช้ใหม่
+	walletStmt, err := db.Prepare("INSERT INTO wallet (cash, user_id) VALUES (?, ?)")
+	if err != nil {
+		// ใน production จริง อาจจะต้องมีการจัดการ error ที่ซับซ้อนกว่านี้ เช่นลบ user ที่เพิ่งสร้างไป
+		http.Error(w, `{"error":"database error on wallet creation"}`, http.StatusInternalServerError)
+		return
+	}
+	defer walletStmt.Close()
+
+	// กำหนดค่าเริ่มต้น cash = 0.00 และใช้ userID ที่ได้มา
+	_, err = walletStmt.Exec(0.00, userID)
+	if err != nil {
+		http.Error(w, `{"error":"cannot insert wallet"}`, http.StatusInternalServerError)
+		return
+	}
+	// ==========================================================
+
 	// สร้าง response object
 	user := map[string]interface{}{
 		"uid":       fmt.Sprintf("%d", userID),
@@ -224,6 +241,8 @@ func registerUser(w http.ResponseWriter, r *http.Request) {
 		"email":     email,
 		"role":      role,
 		"imageUser": imageURL,
+		// เพิ่มข้อมูล cash เริ่มต้นใน response ด้วยก็ได้
+		"cash": 0.00,
 	}
 
 	// ส่ง JSON response
