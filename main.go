@@ -550,15 +550,6 @@ func deleteGame(w http.ResponseWriter, r *http.Request) {
 }
 
 // This struct is for creating a new game (omits GameID)
-type NewGame struct {
-	GameName    string  `json:"game_name"`
-	Price       float64 `json:"price"`
-	Image       *string `json:"image"`
-	Description *string `json:"description"`
-	ReleaseDate *string `json:"release_date"`
-	TypeID      int     `json:"type_id"`
-	UserID      int     `json:"user_id"`
-}
 
 // handler to add a new game (with image upload)
 func addGame(w http.ResponseWriter, r *http.Request) {
@@ -567,21 +558,26 @@ func addGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ✅ 1. Parse multipart form data (max 10MB)
+	// 1. Parse multipart form data (max 10MB)
 	if err := r.ParseMultipartForm(10 << 20); err != nil {
 		http.Error(w, `{"error":"cannot parse form"}`, http.StatusBadRequest)
 		return
 	}
 
-	// ✅ 2. Get form values as strings
+	// 2. Get form values as strings
 	gameName := r.FormValue("game_name")
 	priceStr := r.FormValue("price")
 	description := r.FormValue("description")
-	releaseDate := r.FormValue("release_date")
+	// releaseDate := r.FormValue("release_date") // <<< ไม่ได้รับค่าวันที่จากฟอร์มแล้ว
 	typeIDStr := r.FormValue("type_id")
 	userIDStr := r.FormValue("user_id")
 
-	// ✅ 3. Convert string values to correct types
+	// ==================== ✅ ส่วนที่แก้ไข ====================
+	// สร้างวันที่ปัจจุบันในรูปแบบที่ SQL เข้าใจ (YYYY-MM-DD)
+	releaseDate := time.Now().Format("2006-01-02")
+	// ========================================================
+
+	// 3. Convert string values to correct types
 	price, err := strconv.ParseFloat(priceStr, 64)
 	if err != nil {
 		http.Error(w, `{"error":"invalid price format"}`, http.StatusBadRequest)
@@ -598,7 +594,7 @@ func addGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ✅ 4. Upload image to Cloudinary (if it exists)
+	// 4. Upload image to Cloudinary (if it exists)
 	var imageURL string
 	file, handler, err := r.FormFile("image") // Use "image" as the field name
 	if err == nil {                           // A file was included
@@ -620,7 +616,7 @@ func addGame(w http.ResponseWriter, r *http.Request) {
 		imageURL = uploadRes.SecureURL
 	}
 
-	// ✅ 5. Insert into the database
+	// 5. Insert into the database
 	stmt, err := db.Prepare("INSERT INTO game(game_name, price, image, description, release_date, type_id, user_id) VALUES(?, ?, ?, ?, ?, ?, ?)")
 	if err != nil {
 		http.Error(w, `{"error":"database error preparing statement"}`, http.StatusInternalServerError)
@@ -628,6 +624,7 @@ func addGame(w http.ResponseWriter, r *http.Request) {
 	}
 	defer stmt.Close()
 
+	// สังเกตว่าตัวแปร releaseDate ที่ส่งเข้าไปตอนนี้คือค่าวันที่ปัจจุบัน
 	res, err := stmt.Exec(gameName, price, imageURL, description, releaseDate, typeID, userID)
 	if err != nil {
 		http.Error(w, `{"error":"failed to insert game"}`, http.StatusInternalServerError)
