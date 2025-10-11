@@ -65,12 +65,22 @@ func main() {
 	http.HandleFunc("/wallet/add", withCORS(addFundsToWallet)) // เพิ่มเงินเข้ากระเป๋า
 	http.HandleFunc("/wallet", withCORS(getWalletByUserID))    // ดึงข้อมูลเงินในกระเป๋าตาม user_id
 	http.HandleFunc("/wallet-history", withCORS(getWalletHistory))
-	// ✅ เพิ่มบรรทัดนี้
-	http.HandleFunc("/discount-codes", withCORS(discountCodesHandler))
-	// ✅ เพิ่ม / ต่อท้ายที่ Endpoint นี้
-	http.HandleFunc("/discount-codes/", withCORS(discountCodeByIDHandler))
-	// ✅ Endpoint เดิมสำหรับ GET และ POST
-	http.HandleFunc("/discount-codes", withCORS(discountCodesHandler))
+	// // ✅ เพิ่มบรรทัดนี้
+	// http.HandleFunc("/discount-codes", withCORS(discountCodesHandler))
+	// // ✅ เพิ่ม / ต่อท้ายที่ Endpoint นี้
+	// http.HandleFunc("/discount-codes/", withCORS(discountCodeByIDHandler))
+	// // ✅ Endpoint เดิมสำหรับ GET และ POST
+	// http.HandleFunc("/discount-codes", withCORS(discountCodesHandler))
+	// ✅ GET (ทั้งหมด): ดึงโค้ดส่วนลดทั้งหมด
+	http.HandleFunc("/discount-codes", withCORS(getDiscountCodesHandler))
+	// ✅ POST: สร้างโค้ดส่วนลดใหม่
+	http.HandleFunc("/discount-codes/add", withCORS(addDiscountCodeHandler))
+	// ✅ GET (ชิ้นเดียว): ดึงโค้ดส่วนลดตาม ID
+	http.HandleFunc("/discount-codes/get/", withCORS(getDiscountCodeByIDHandler))
+	// ✅ PUT: แก้ไขโค้ดส่วนลดตาม ID
+	http.HandleFunc("/discount-codes/update/", withCORS(updateDiscountCodeHandler))
+	// ✅ DELETE: ลบโค้ดส่วนลดตาม ID
+	http.HandleFunc("/discount-codes/delete/", withCORS(deleteDiscountCodeHandler))
 
 	// หา IP ของเครื่อง
 	ip := getLocalIP()
@@ -1011,20 +1021,119 @@ type DiscountCode struct {
 	IsActive   bool       `json:"is_active"`
 }
 
-// main.go
+// // main.go
 
-func discountCodesHandler(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		getDiscountCodes(w, r)
-	case http.MethodPost:
-		addDiscountCode(w, r)
-	default:
+// func discountCodesHandler(w http.ResponseWriter, r *http.Request) {
+// 	switch r.Method {
+// 	case http.MethodGet:
+// 		getDiscountCodes(w, r)
+// 	case http.MethodPost:
+// 		addDiscountCode(w, r)
+// 	default:
+// 		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+// 	}
+// }
+
+// func getDiscountCodes(w http.ResponseWriter, r *http.Request) {
+// 	rows, err := db.Query("SELECT code_id, code, discount_type, discount_value, expiry_date, usage_limit, times_used, is_active FROM discount_codes ORDER BY code_id DESC")
+// 	if err != nil {
+// 		http.Error(w, `{"error":"Database query error"}`, http.StatusInternalServerError)
+// 		return
+// 	}
+// 	defer rows.Close()
+
+// 	var codes []DiscountCode
+// 	for rows.Next() {
+// 		var dc DiscountCode
+// 		if err := rows.Scan(&dc.CodeID, &dc.Code, &dc.DiscountType, &dc.DiscountValue, &dc.ExpiryDate, &dc.UsageLimit, &dc.TimesUsed, &dc.IsActive); err != nil {
+// 			http.Error(w, `{"error":"Failed to scan row"}`, http.StatusInternalServerError)
+// 			return
+// 		}
+// 		codes = append(codes, dc)
+// 	}
+// 	w.Header().Set("Content-Type", "application/json")
+// 	json.NewEncoder(w).Encode(codes)
+// }
+
+// func addDiscountCode(w http.ResponseWriter, r *http.Request) {
+// 	var newCode DiscountCode
+// 	if err := json.NewDecoder(r.Body).Decode(&newCode); err != nil {
+// 		http.Error(w, `{"error":"Invalid request body"}`, http.StatusBadRequest)
+// 		return
+// 	}
+
+// 	// ใช้ db.Exec สำหรับ INSERT
+// 	_, err := db.Exec(
+// 		"INSERT INTO discount_codes (code, discount_type, discount_value, expiry_date, usage_limit, is_active) VALUES (?, ?, ?, ?, ?, ?)",
+// 		newCode.Code, newCode.DiscountType, newCode.DiscountValue, newCode.ExpiryDate, newCode.UsageLimit, newCode.IsActive,
+// 	)
+// 	if err != nil {
+// 		http.Error(w, `{"error":"Failed to create discount code"}`, http.StatusInternalServerError)
+// 		return
+// 	}
+
+// 	w.Header().Set("Content-Type", "application/json")
+// 	w.WriteHeader(http.StatusCreated)
+// 	json.NewEncoder(w).Encode(map[string]string{"message": "Discount code created successfully"})
+// }
+
+// // ✅ แก้ไข: สร้าง Handler ใหม่สำหรับจัดการ ID
+// func discountCodeByIDHandler(w http.ResponseWriter, r *http.Request) {
+// 	// ดึง ID จาก URL path, e.g., /discount-codes/12
+// 	parts := strings.Split(r.URL.Path, "/")
+// 	idStr := parts[len(parts)-1]
+// 	id, err := strconv.Atoi(idStr)
+// 	if err != nil {
+// 		http.Error(w, `{"error":"Invalid ID format"}`, http.StatusBadRequest)
+// 		return
+// 	}
+
+// 	switch r.Method {
+// 	case http.MethodPut:
+// 		updateDiscountCode(w, r, id)
+// 	case http.MethodDelete:
+// 		deleteDiscountCode(w, r, id)
+// 	default:
+// 		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+// 	}
+// }
+
+// func updateDiscountCode(w http.ResponseWriter, r *http.Request, id int) {
+// 	var codeToUpdate DiscountCode
+// 	if err := json.NewDecoder(r.Body).Decode(&codeToUpdate); err != nil {
+// 		http.Error(w, `{"error":"Invalid request body"}`, http.StatusBadRequest)
+// 		return
+// 	}
+
+// 	_, err := db.Exec(
+// 		"UPDATE discount_codes SET code=?, discount_type=?, discount_value=?, expiry_date=?, usage_limit=?, is_active=? WHERE code_id=?",
+// 		codeToUpdate.Code, codeToUpdate.DiscountType, codeToUpdate.DiscountValue, codeToUpdate.ExpiryDate, codeToUpdate.UsageLimit, codeToUpdate.IsActive, id,
+// 	)
+// 	if err != nil {
+// 		http.Error(w, `{"error":"Failed to update discount code"}`, http.StatusInternalServerError)
+// 		return
+// 	}
+// 	w.WriteHeader(http.StatusOK)
+// 	json.NewEncoder(w).Encode(map[string]string{"message": "Code updated successfully"})
+// }
+
+//	func deleteDiscountCode(w http.ResponseWriter, r *http.Request, id int) {
+//		_, err := db.Exec("DELETE FROM discount_codes WHERE code_id = ?", id)
+//		if err != nil {
+//			http.Error(w, `{"error":"Failed to delete discount code"}`, http.StatusInternalServerError)
+//			return
+//		}
+//		w.WriteHeader(http.StatusOK)
+//		json.NewEncoder(w).Encode(map[string]string{"message": "Code deleted successfully"})
+//	}
+//
+// --- 1. Handler สำหรับ GET (ดึงข้อมูลทั้งหมด) ---
+func getDiscountCodesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
 		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
 	}
-}
 
-func getDiscountCodes(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query("SELECT code_id, code, discount_type, discount_value, expiry_date, usage_limit, times_used, is_active FROM discount_codes ORDER BY code_id DESC")
 	if err != nil {
 		http.Error(w, `{"error":"Database query error"}`, http.StatusInternalServerError)
@@ -1045,14 +1154,19 @@ func getDiscountCodes(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(codes)
 }
 
-func addDiscountCode(w http.ResponseWriter, r *http.Request) {
+// --- 2. Handler สำหรับ POST (เพิ่มข้อมูล) ---
+func addDiscountCodeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
 	var newCode DiscountCode
 	if err := json.NewDecoder(r.Body).Decode(&newCode); err != nil {
 		http.Error(w, `{"error":"Invalid request body"}`, http.StatusBadRequest)
 		return
 	}
 
-	// ใช้ db.Exec สำหรับ INSERT
 	_, err := db.Exec(
 		"INSERT INTO discount_codes (code, discount_type, discount_value, expiry_date, usage_limit, is_active) VALUES (?, ?, ?, ?, ?, ?)",
 		newCode.Code, newCode.DiscountType, newCode.DiscountValue, newCode.ExpiryDate, newCode.UsageLimit, newCode.IsActive,
@@ -1067,35 +1181,58 @@ func addDiscountCode(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"message": "Discount code created successfully"})
 }
 
-// ✅ แก้ไข: สร้าง Handler ใหม่สำหรับจัดการ ID
-func discountCodeByIDHandler(w http.ResponseWriter, r *http.Request) {
-	// ดึง ID จาก URL path, e.g., /discount-codes/12
-	parts := strings.Split(r.URL.Path, "/")
-	idStr := parts[len(parts)-1]
+// --- 3. Handler สำหรับ GET (ดึงข้อมูลชิ้นเดียวตาม ID) ---
+func getDiscountCodeByIDHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	// ดึง ID จาก URL เช่น /discount-codes/get/123
+	idStr := strings.TrimPrefix(r.URL.Path, "/discount-codes/get/")
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
 		http.Error(w, `{"error":"Invalid ID format"}`, http.StatusBadRequest)
 		return
 	}
 
-	switch r.Method {
-	case http.MethodPut:
-		updateDiscountCode(w, r, id)
-	case http.MethodDelete:
-		deleteDiscountCode(w, r, id)
-	default:
-		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+	var dc DiscountCode
+	err = db.QueryRow("SELECT code_id, code, discount_type, discount_value, expiry_date, usage_limit, times_used, is_active FROM discount_codes WHERE code_id = ?", id).Scan(&dc.CodeID, &dc.Code, &dc.DiscountType, &dc.DiscountValue, &dc.ExpiryDate, &dc.UsageLimit, &dc.TimesUsed, &dc.IsActive)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, `{"error":"Discount code not found"}`, http.StatusNotFound)
+			return
+		}
+		http.Error(w, `{"error":"Database error"}`, http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(dc)
 }
 
-func updateDiscountCode(w http.ResponseWriter, r *http.Request, id int) {
+// --- 4. Handler สำหรับ PUT (แก้ไขข้อมูลตาม ID) ---
+func updateDiscountCodeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	// ดึง ID จาก URL เช่น /discount-codes/update/123
+	idStr := strings.TrimPrefix(r.URL.Path, "/discount-codes/update/")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		http.Error(w, `{"error":"Invalid ID format"}`, http.StatusBadRequest)
+		return
+	}
+
 	var codeToUpdate DiscountCode
 	if err := json.NewDecoder(r.Body).Decode(&codeToUpdate); err != nil {
 		http.Error(w, `{"error":"Invalid request body"}`, http.StatusBadRequest)
 		return
 	}
 
-	_, err := db.Exec(
+	_, err = db.Exec(
 		"UPDATE discount_codes SET code=?, discount_type=?, discount_value=?, expiry_date=?, usage_limit=?, is_active=? WHERE code_id=?",
 		codeToUpdate.Code, codeToUpdate.DiscountType, codeToUpdate.DiscountValue, codeToUpdate.ExpiryDate, codeToUpdate.UsageLimit, codeToUpdate.IsActive, id,
 	)
@@ -1107,8 +1244,22 @@ func updateDiscountCode(w http.ResponseWriter, r *http.Request, id int) {
 	json.NewEncoder(w).Encode(map[string]string{"message": "Code updated successfully"})
 }
 
-func deleteDiscountCode(w http.ResponseWriter, r *http.Request, id int) {
-	_, err := db.Exec("DELETE FROM discount_codes WHERE code_id = ?", id)
+// --- 5. Handler สำหรับ DELETE (ลบข้อมูลตาม ID) ---
+func deleteDiscountCodeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	// ดึง ID จาก URL เช่น /discount-codes/delete/123
+	idStr := strings.TrimPrefix(r.URL.Path, "/discount-codes/delete/")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		http.Error(w, `{"error":"Invalid ID format"}`, http.StatusBadRequest)
+		return
+	}
+
+	_, err = db.Exec("DELETE FROM discount_codes WHERE code_id = ?", id)
 	if err != nil {
 		http.Error(w, `{"error":"Failed to delete discount code"}`, http.StatusInternalServerError)
 		return
