@@ -64,6 +64,8 @@ func main() {
 	http.HandleFunc("/wallet/add", withCORS(addFundsToWallet)) // เพิ่มเงินเข้ากระเป๋า
 	http.HandleFunc("/wallet", withCORS(getWalletByUserID))    // ดึงข้อมูลเงินในกระเป๋าตาม user_id
 	http.HandleFunc("/wallet-history", withCORS(getWalletHistory))
+	// ✅ เพิ่มบรรทัดนี้
+	http.HandleFunc("/discount-codes", withCORS(discountCodesHandler))
 
 	// หา IP ของเครื่อง
 	ip := getLocalIP()
@@ -990,4 +992,72 @@ func getWalletHistory(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(history)
+}
+
+type DiscountCode struct {
+	CodeID        int     `json:"code_id"`
+	Code          string  `json:"code"`
+	DiscountType  string  `json:"discount_type"` // 'percentage' or 'fixed'
+	DiscountValue float64 `json:"discount_value"`
+	// ใช้ pointer เพราะค่าอาจเป็น NULL
+	ExpiryDate *time.Time `json:"expiry_date"`
+	UsageLimit int        `json:"usage_limit"`
+	TimesUsed  int        `json:"times_used"`
+	IsActive   bool       `json:"is_active"`
+}
+
+// main.go
+
+func discountCodesHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		getDiscountCodes(w, r)
+	case http.MethodPost:
+		addDiscountCode(w, r)
+	default:
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+	}
+}
+
+func getDiscountCodes(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query("SELECT code_id, code, discount_type, discount_value, expiry_date, usage_limit, times_used, is_active FROM discount_codes ORDER BY code_id DESC")
+	if err != nil {
+		http.Error(w, `{"error":"Database query error"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var codes []DiscountCode
+	for rows.Next() {
+		var dc DiscountCode
+		if err := rows.Scan(&dc.CodeID, &dc.Code, &dc.DiscountType, &dc.DiscountValue, &dc.ExpiryDate, &dc.UsageLimit, &dc.TimesUsed, &dc.IsActive); err != nil {
+			http.Error(w, `{"error":"Failed to scan row"}`, http.StatusInternalServerError)
+			return
+		}
+		codes = append(codes, dc)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(codes)
+}
+
+func addDiscountCode(w http.ResponseWriter, r *http.Request) {
+	var newCode DiscountCode
+	if err := json.NewDecoder(r.Body).Decode(&newCode); err != nil {
+		http.Error(w, `{"error":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	// ใช้ db.Exec สำหรับ INSERT
+	_, err := db.Exec(
+		"INSERT INTO discount_codes (code, discount_type, discount_value, expiry_date, usage_limit, is_active) VALUES (?, ?, ?, ?, ?, ?)",
+		newCode.Code, newCode.DiscountType, newCode.DiscountValue, newCode.ExpiryDate, newCode.UsageLimit, newCode.IsActive,
+	)
+	if err != nil {
+		http.Error(w, `{"error":"Failed to create discount code"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Discount code created successfully"})
 }
