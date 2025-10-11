@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cloudinary/cloudinary-go/v2"              // ✅ import Cloudinary
@@ -65,6 +66,10 @@ func main() {
 	http.HandleFunc("/wallet", withCORS(getWalletByUserID))    // ดึงข้อมูลเงินในกระเป๋าตาม user_id
 	http.HandleFunc("/wallet-history", withCORS(getWalletHistory))
 	// ✅ เพิ่มบรรทัดนี้
+	http.HandleFunc("/discount-codes", withCORS(discountCodesHandler))
+	// ✅ เพิ่ม / ต่อท้ายที่ Endpoint นี้
+	http.HandleFunc("/discount-codes/", withCORS(discountCodeByIDHandler))
+	// ✅ Endpoint เดิมสำหรับ GET และ POST
 	http.HandleFunc("/discount-codes", withCORS(discountCodesHandler))
 
 	// หา IP ของเครื่อง
@@ -1060,4 +1065,54 @@ func addDiscountCode(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]string{"message": "Discount code created successfully"})
+}
+
+// ✅ แก้ไข: สร้าง Handler ใหม่สำหรับจัดการ ID
+func discountCodeByIDHandler(w http.ResponseWriter, r *http.Request) {
+	// ดึง ID จาก URL path, e.g., /discount-codes/12
+	parts := strings.Split(r.URL.Path, "/")
+	idStr := parts[len(parts)-1]
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		http.Error(w, `{"error":"Invalid ID format"}`, http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodPut:
+		updateDiscountCode(w, r, id)
+	case http.MethodDelete:
+		deleteDiscountCode(w, r, id)
+	default:
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+	}
+}
+
+func updateDiscountCode(w http.ResponseWriter, r *http.Request, id int) {
+	var codeToUpdate DiscountCode
+	if err := json.NewDecoder(r.Body).Decode(&codeToUpdate); err != nil {
+		http.Error(w, `{"error":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	_, err := db.Exec(
+		"UPDATE discount_codes SET code=?, discount_type=?, discount_value=?, expiry_date=?, usage_limit=?, is_active=? WHERE code_id=?",
+		codeToUpdate.Code, codeToUpdate.DiscountType, codeToUpdate.DiscountValue, codeToUpdate.ExpiryDate, codeToUpdate.UsageLimit, codeToUpdate.IsActive, id,
+	)
+	if err != nil {
+		http.Error(w, `{"error":"Failed to update discount code"}`, http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Code updated successfully"})
+}
+
+func deleteDiscountCode(w http.ResponseWriter, r *http.Request, id int) {
+	_, err := db.Exec("DELETE FROM discount_codes WHERE code_id = ?", id)
+	if err != nil {
+		http.Error(w, `{"error":"Failed to delete discount code"}`, http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Code deleted successfully"})
 }
