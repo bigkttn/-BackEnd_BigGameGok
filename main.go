@@ -65,17 +65,14 @@ func main() {
 	http.HandleFunc("/wallet/add", withCORS(addFundsToWallet)) // เพิ่มเงินเข้ากระเป๋า
 	http.HandleFunc("/wallet", withCORS(getWalletByUserID))    // ดึงข้อมูลเงินในกระเป๋าตาม user_id
 	http.HandleFunc("/wallet-history", withCORS(getWalletHistory))
-	// ✅ GET (ทั้งหมด): ดึงโค้ดส่วนลดทั้งหมด
-	http.HandleFunc("/discount-codes", withCORS(getDiscountCodesHandler))
-	// ✅ POST: สร้างโค้ดส่วนลดใหม่
-	http.HandleFunc("/discount-codes/add", withCORS(addDiscountCodeHandler))
-	// ✅ GET (ชิ้นเดียว): ดึงโค้ดส่วนลดตาม ID
-	http.HandleFunc("/discount-codes/get/", withCORS(getDiscountCodeByIDHandler))
-	// ✅ PUT: แก้ไขโค้ดส่วนลดตาม ID
-	http.HandleFunc("/discount-codes/update/", withCORS(updateDiscountCodeHandler))
-	// ✅ DELETE: ลบโค้ดส่วนลดตาม ID
-	http.HandleFunc("/discount-codes/delete/", withCORS(deleteDiscountCodeHandler))
+	http.HandleFunc("/discount-codes", withCORS(getDiscountCodesHandler))           // ✅ GET (ทั้งหมด): ดึงโค้ดส่วนลดทั้งหมด
+	http.HandleFunc("/discount-codes/add", withCORS(addDiscountCodeHandler))        // ✅ POST: สร้างโค้ดส่วนลดใหม่
+	http.HandleFunc("/discount-codes/get/", withCORS(getDiscountCodeByIDHandler))   // ✅ GET (ชิ้นเดียว): ดึงโค้ดส่วนลดตาม ID
+	http.HandleFunc("/discount-codes/update/", withCORS(updateDiscountCodeHandler)) // ✅ PUT: แก้ไขโค้ดส่วนลดตาม ID
+	http.HandleFunc("/discount-codes/delete/", withCORS(deleteDiscountCodeHandler)) // ✅ DELETE: ลบโค้ดส่วนลดตาม ID
 	http.HandleFunc("/purchase-history", withCORS(getPurchaseHistoryHandler))
+	http.HandleFunc("/buygame", withCORS(buyGame))         // ซื้อเกม
+	http.HandleFunc("/searchgames", withCORS(searchGames)) // ค้นหาเกม/ Knn
 
 	// หา IP ของเครื่อง
 	ip := getLocalIP()
@@ -1208,4 +1205,165 @@ func getPurchaseHistoryHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(history)
+}
+
+type BuyGameRequest struct {
+	UserID int `json:"user_id"`
+	GameID int `json:"game_id"`
+}
+
+// //////////////////////// buyGame ////////////////////////////////
+func buyGame(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 1. อ่านข้อมูล user_id และ game_id จาก request body
+	var req BuyGameRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	// 2. เริ่มต้น Transaction
+	tx, err := db.Begin()
+	if err != nil {
+		http.Error(w, `{"error":"Cannot start transaction"}`, http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback() // ถ้าเกิดข้อผิดพลาด ให้ Rollback ทั้งหมด
+
+	// 3. ดึงข้อมูล "ราคาเกม" และ "เงินในกระเป๋า" ของผู้ใช้ พร้อมกันในครั้งเดียว
+	var gamePrice float64
+	var userCash float64
+	var wid int
+	// ใช้ QueryRow ภายใน Transaction
+	err = tx.QueryRow("SELECT g.price, w.cash, w.wid FROM game g JOIN wallet w ON g.game_id = ? AND w.user_id = ?", req.GameID, req.UserID).Scan(&gamePrice, &userCash, &wid)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, `{"error":"Game or user wallet not found"}`, http.StatusNotFound)
+			return
+		}
+		http.Error(w, `{"error":"Database error fetching game/wallet info"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// 4. ตรวจสอบว่ามีเงินพอหรือไม่
+	if userCash < gamePrice {
+		http.Error(w, `{"error":"Insufficient funds"}`, http.StatusPaymentRequired) // 402 Payment Required
+		return
+	}
+
+	// 5. หักเงินออกจาก Wallet ของผู้ใช้
+	_, err = tx.Exec("UPDATE wallet SET cash = cash - ? WHERE user_id = ?", gamePrice, req.UserID)
+	if err != nil {
+		http.Error(w, `{"error":"Failed to deduct funds from wallet"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// 6. สร้าง Order ใหม่ในตาราง `orders`
+	orderRes, err := tx.Exec("INSERT INTO orders (user_id, total_amount) VALUES (?, ?)", req.UserID, gamePrice)
+	if err != nil {
+		http.Error(w, `{"error":"Failed to create order"}`, http.StatusInternalServerError)
+		return
+	}
+	// ดึง order_id ที่เพิ่งสร้างขึ้นมา
+	newOrderID, err := orderRes.LastInsertId()
+	if err != nil {
+		http.Error(w, `{"error":"Failed to get new order ID"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// 7. เพิ่มรายละเอียด Order ลงในตาราง `order_details`
+	_, err = tx.Exec("INSERT INTO order_details (order_id, game_id, price) VALUES (?, ?, ?)", newOrderID, req.GameID, gamePrice)
+	if err != nil {
+		http.Error(w, `{"error":"Failed to create order detail"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// 8. (แนะนำ) เพิ่มประวัติการใช้เงิน (ติดลบ) ลงใน `historywallet`
+	currentDate := time.Now().Format("2006-01-02")
+	_, err = tx.Exec("INSERT INTO historywallet (date, amount, wid) VALUES (?, ?, ?)", currentDate, -gamePrice, wid)
+	if err != nil {
+		http.Error(w, `{"error":"Failed to insert into wallet history"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// 9. ถ้าทุกอย่างสำเร็จทั้งหมด ให้ Commit Transaction
+	if err := tx.Commit(); err != nil {
+		http.Error(w, `{"error":"Failed to commit transaction"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// 10. ส่ง Response สำเร็จกลับไป
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":     "Purchase successful!",
+		"order_id":    newOrderID,
+		"game_id":     req.GameID,
+		"paid_amount": gamePrice,
+	})
+}
+
+///////////////////////////////////////////////////////////////
+
+// handler สำหรับค้นหาเกมโดยเฉพาะ
+func searchGames(w http.ResponseWriter, r *http.Request) {
+	// 1. ดึงค่า search (ชื่อเกม) และ type_name (ชื่อประเภท) จาก URL
+	searchTerm := r.URL.Query().Get("search")
+	typeName := r.URL.Query().Get("type_name") // 👈 เปลี่ยนจาก type_id
+
+	// 2. สร้างคำสั่ง SQL พื้นฐาน และ slice สำหรับเก็บค่า
+	query := "SELECT g.game_id, g.game_name, g.price, g.image, g.description, g.release_date, g.sold, g.type_id, g.user_id FROM game g"
+	joinClause := ""
+	args := []interface{}{}
+	whereClauses := []string{}
+
+	// 3. เพิ่มเงื่อนไขการค้นหาจาก "ชื่อเกม" (เหมือนเดิม)
+	if searchTerm != "" {
+		whereClauses = append(whereClauses, "g.game_name LIKE ?")
+		args = append(args, "%"+searchTerm+"%")
+	}
+
+	// 4. ✅ เพิ่มเงื่อนไขการค้นหาจาก "ชื่อประเภท"
+	if typeName != "" {
+		// ถ้ามีการค้นหาจากประเภท ต้อง JOIN ตาราง typegame เข้ามา
+		joinClause = " JOIN typegame t ON g.type_id = t.type_id"
+		whereClauses = append(whereClauses, "t.type_name = ?") // 👈 ค้นหาจาก t.type_name
+		args = append(args, typeName)
+	}
+
+	// 5. นำ JOIN และ WHERE มารวมกับคำสั่งหลัก
+	query += joinClause
+	if len(whereClauses) > 0 {
+		query += " WHERE " + strings.Join(whereClauses, " AND ")
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]Game{})
+		return
+	}
+
+	// 6. Execute SQL (เหมือนเดิม)
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	// ... ส่วนแปลงข้อมูลเป็น JSON เหมือนกับฟังก์ชัน getGames ...
+	var games []Game
+	for rows.Next() {
+		var g Game
+		if err := rows.Scan(&g.GameID, &g.GameName, &g.Price, &g.Image, &g.Description, &g.ReleaseDate, &g.Sold, &g.TypeID, &g.UserID); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		games = append(games, g)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(games)
 }
