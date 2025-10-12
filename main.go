@@ -1213,7 +1213,7 @@ type BuyGameRequest struct {
 	GameID int `json:"game_id"`
 }
 
-// //////////////////////// buyGame ////////////////////////////////
+// ✅ แก้ไขฟังก์ชัน buyGame ให้สมบูรณ์
 func buyGame(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
@@ -1233,20 +1233,33 @@ func buyGame(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"Cannot start transaction"}`, http.StatusInternalServerError)
 		return
 	}
-	defer tx.Rollback() // ถ้าเกิดข้อผิดพลาด ให้ Rollback ทั้งหมด
+	// ถ้าเกิดข้อผิดพลาด ให้ Rollback ทั้งหมด
+	defer tx.Rollback()
 
-	// 3. ดึงข้อมูล "ราคาเกม" และ "เงินในกระเป๋า" ของผู้ใช้ พร้อมกันในครั้งเดียว
+	// 3. ✅ แก้ไข: ดึงข้อมูล "ราคาเกม" และ "เงินในกระเป๋า" แยกกันเพื่อความถูกต้อง
 	var gamePrice float64
 	var userCash float64
 	var wid int
-	// ใช้ QueryRow ภายใน Transaction
-	err = tx.QueryRow("SELECT g.price, w.cash, w.wid FROM game g JOIN wallet w ON g.game_id = ? AND w.user_id = ?", req.GameID, req.UserID).Scan(&gamePrice, &userCash, &wid)
+
+	// ดึงราคาเกม
+	err = tx.QueryRow("SELECT price FROM game WHERE game_id = ?", req.GameID).Scan(&gamePrice)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			http.Error(w, `{"error":"Game or user wallet not found"}`, http.StatusNotFound)
+			http.Error(w, `{"error":"Game not found"}`, http.StatusNotFound)
 			return
 		}
-		http.Error(w, `{"error":"Database error fetching game/wallet info"}`, http.StatusInternalServerError)
+		http.Error(w, `{"error":"Database error fetching game price"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// ดึงเงินในกระเป๋าและ wallet ID
+	err = tx.QueryRow("SELECT cash, wid FROM wallet WHERE user_id = ?", req.UserID).Scan(&userCash, &wid)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, `{"error":"User wallet not found"}`, http.StatusNotFound)
+			return
+		}
+		http.Error(w, `{"error":"Database error fetching wallet info"}`, http.StatusInternalServerError)
 		return
 	}
 
@@ -1264,12 +1277,11 @@ func buyGame(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 6. สร้าง Order ใหม่ในตาราง `orders`
-	orderRes, err := tx.Exec("INSERT INTO orders (user_id, total_amount) VALUES (?, ?)", req.UserID, gamePrice)
+	orderRes, err := tx.Exec("INSERT INTO orders (user_id, total_amount, order_date) VALUES (?, ?, NOW())", req.UserID, gamePrice)
 	if err != nil {
 		http.Error(w, `{"error":"Failed to create order"}`, http.StatusInternalServerError)
 		return
 	}
-	// ดึง order_id ที่เพิ่งสร้างขึ้นมา
 	newOrderID, err := orderRes.LastInsertId()
 	if err != nil {
 		http.Error(w, `{"error":"Failed to get new order ID"}`, http.StatusInternalServerError)
@@ -1283,21 +1295,28 @@ func buyGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 8. (แนะนำ) เพิ่มประวัติการใช้เงิน (ติดลบ) ลงใน `historywallet`
-	currentDate := time.Now().Format("2006-01-02")
+	// 8. อัปเดตยอดขาย ('sold') ในตาราง 'game'
+	_, err = tx.Exec("UPDATE game SET sold = sold + 1 WHERE game_id = ?", req.GameID)
+	if err != nil {
+		http.Error(w, `{"error":"Failed to update game sold count"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// 9. เพิ่มประวัติการใช้เงิน (ติดลบ) ลงใน `historywallet`
+	currentDate := time.Now().Format("2006-01-02 15:04:05")
 	_, err = tx.Exec("INSERT INTO historywallet (date, amount, wid) VALUES (?, ?, ?)", currentDate, -gamePrice, wid)
 	if err != nil {
 		http.Error(w, `{"error":"Failed to insert into wallet history"}`, http.StatusInternalServerError)
 		return
 	}
 
-	// 9. ถ้าทุกอย่างสำเร็จทั้งหมด ให้ Commit Transaction
+	// 10. ถ้าทุกอย่างสำเร็จทั้งหมด ให้ Commit Transaction
 	if err := tx.Commit(); err != nil {
 		http.Error(w, `{"error":"Failed to commit transaction"}`, http.StatusInternalServerError)
 		return
 	}
 
-	// 10. ส่ง Response สำเร็จกลับไป
+	// 11. ส่ง Response สำเร็จกลับไป
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]interface{}{
