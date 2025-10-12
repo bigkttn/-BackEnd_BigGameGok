@@ -70,9 +70,10 @@ func main() {
 	http.HandleFunc("/discount-codes/get/", withCORS(getDiscountCodeByIDHandler))   // ✅ GET (ชิ้นเดียว): ดึงโค้ดส่วนลดตาม ID
 	http.HandleFunc("/discount-codes/update/", withCORS(updateDiscountCodeHandler)) // ✅ PUT: แก้ไขโค้ดส่วนลดตาม ID
 	http.HandleFunc("/discount-codes/delete/", withCORS(deleteDiscountCodeHandler)) // ✅ DELETE: ลบโค้ดส่วนลดตาม ID
-	http.HandleFunc("/purchase-history", withCORS(getPurchaseHistoryHandler))
-	http.HandleFunc("/buygame", withCORS(buyGame))         // ซื้อเกม
-	http.HandleFunc("/searchgames", withCORS(searchGames)) // ค้นหาเกม/ Knn
+	http.HandleFunc("/purchase-history", withCORS(getPurchaseHistoryHandler))       // ประวัติการซื้อเกม
+	http.HandleFunc("/buygame", withCORS(buyGame))                                  // ซื้อเกม
+	http.HandleFunc("/searchgames", withCORS(searchGames))                          // ค้นหาเกม/ Knn
+	http.HandleFunc("/user-library", withCORS(getUserLibraryHandler))               // ดึงคลังเกมของผู้ใช้
 
 	// หา IP ของเครื่อง
 	ip := getLocalIP()
@@ -1366,4 +1367,55 @@ func searchGames(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(games)
+}
+
+type LibraryGame struct {
+	GameID   int     `json:"game_id"`
+	GameName string  `json:"game_name"`
+	Image    *string `json:"image"`
+}
+
+func getUserLibraryHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		http.Error(w, `{"error":"Query parameter 'user_id' is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// ใช้ SQL JOIN เพื่อดึงรายชื่อเกมที่ไม่ซ้ำกัน
+	query := `
+		SELECT DISTINCT
+			g.game_id,
+			g.game_name,
+			g.image
+		FROM orders o
+		JOIN order_details od ON o.order_id = od.order_id
+		JOIN game g ON od.game_id = g.game_id
+		WHERE o.user_id = ?
+		ORDER BY g.game_name ASC
+	`
+	rows, err := db.Query(query, userID)
+	if err != nil {
+		http.Error(w, `{"error":"Database query error"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var library []LibraryGame
+	for rows.Next() {
+		var item LibraryGame
+		if err := rows.Scan(&item.GameID, &item.GameName, &item.Image); err != nil {
+			http.Error(w, `{"error":"Failed to scan row"}`, http.StatusInternalServerError)
+			return
+		}
+		library = append(library, item)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(library)
 }
