@@ -1367,6 +1367,7 @@ func buyGame(w http.ResponseWriter, r *http.Request) {
 	// ✅ การเปลี่ยนแปลงที่สำคัญ: เพิ่ม FOR UPDATE เพื่อล็อคแถวข้อมูล Wallet
 	// ดึงเงินในกระเป๋าและ wallet ID พร้อมกับ "ล็อค" แถวข้อมูลนี้ทันที
 	// Transaction อื่นจะไม่สามารถเข้ามาอ่านหรือแก้ไขข้อมูล Wallet ของ user คนนี้ได้จนกว่า Transaction ปัจจุบันจะเสร็จสิ้น
+	//FOR UPDATE ต่อท้าย SELECT การล็อคนี้จะบอกว่า "ห้าม Transaction อื่นเข้ามายุ่งกับแถวนี้ จนกว่า Transaction ของฉันจะเสร็จ (Commit หรือ Rollback)"
 	err = tx.QueryRow("SELECT cash, wid FROM wallet WHERE user_id = ? FOR UPDATE", req.UserID).Scan(&userCash, &wid)
 	if err != nil {
 		if err == sql.ErrNoRows {
