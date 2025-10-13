@@ -1553,3 +1553,165 @@ func getUserLibraryHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(library)
 }
+
+type CartItem struct {
+	GameID      int     `json:"game_id"`
+	GameName    string  `json:"game_name"`
+	Price       float64 `json:"price"`
+	Image       *string `json:"image"`
+	Description *string `json:"description"`
+	CartID      int     `json:"cart_id"`
+}
+
+// AddToCartRequest defines the structure for the JSON body
+type AddToCartRequest struct {
+	UserID int `json:"user_id"`
+	GameID int `json:"game_id"`
+}
+
+// เพิ่มเกมลงตะกร้า
+func addToCart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 1. อ่าน user_id และ game_id จาก request body
+	var req AddToCartRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"Invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+
+	// 2. ตรวจสอบก่อนว่าเกมนี้มีอยู่ในตะกร้าของผู้ใช้คนนี้แล้วหรือยัง
+	var count int
+	err := db.QueryRow("SELECT COUNT(*) FROM cart WHERE user_id = ? AND game_id = ?", req.UserID, req.GameID).Scan(&count)
+	if err != nil {
+		http.Error(w, `{"error":"Database error checking cart"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if count > 0 {
+		// ถ้ามีอยู่แล้ว ให้แจ้งเตือนและไม่ต้องทำอะไรต่อ
+		http.Error(w, `{"error":"Item already in cart"}`, http.StatusConflict) // 409 Conflict
+		return
+	}
+
+	// 3. ถ้ายังไม่มี ให้ INSERT ข้อมูลลงในตาราง cart
+	stmt, err := db.Prepare("INSERT INTO cart (user_id, game_id) VALUES (?, ?)")
+	if err != nil {
+		http.Error(w, `{"error":"Failed to prepare statement"}`, http.StatusInternalServerError)
+		return
+	}
+	defer stmt.Close()
+
+	res, err := stmt.Exec(req.UserID, req.GameID)
+	if err != nil {
+		http.Error(w, `{"error":"Failed to insert into cart"}`, http.StatusInternalServerError)
+		return
+	}
+
+	newCartID, err := res.LastInsertId()
+	if err != nil {
+		http.Error(w, `{"error":"Failed to get new cart ID"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// 4. ส่ง Response สำเร็จกลับไป
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated) // 201 Created
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": "Game added to cart successfully",
+		"cart_id": newCartID,
+	})
+}
+
+// getCartItems
+func getCartItems(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	userID := r.URL.Query().Get("user_id")
+	if userID == "" {
+		http.Error(w, `{"error":"Query parameter 'user_id' is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// ✅ แก้ไข SQL Query ให้ SELECT cart_id ออกมาด้วย
+	query := `
+		SELECT g.game_id, g.game_name, g.price, g.image, g.description, c.cart_id
+		FROM game g JOIN cart c ON g.game_id = c.game_id
+		WHERE c.user_id = ?
+	`
+	rows, err := db.Query(query, userID)
+	if err != nil {
+		http.Error(w, `{"error":"Database query error"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	// ✅ เปลี่ยนไปใช้ []CartItem
+	var items []CartItem
+	for rows.Next() {
+		var item CartItem
+		// ✅ แก้ไข Scan ให้รับ cart_id
+		if err := rows.Scan(&item.GameID, &item.GameName, &item.Price, &item.Image, &item.Description, &item.CartID); err != nil {
+			http.Error(w, `{"error":"Failed to scan row"}`, http.StatusInternalServerError)
+			return
+		}
+		items = append(items, item)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(items)
+}
+
+// removeFromCart handles deleting an item from the cart by its cart_id
+func removeFromCart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, `{"error":"Method not allowed"}`, http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 1. รับ cart_id จาก query parameter e.g., /cart/remove?cart_id=1
+	cartID := r.URL.Query().Get("cart_id")
+	if cartID == "" {
+		http.Error(w, `{"error":"Query parameter 'cart_id' is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// 2. สร้างและ Execute คำสั่ง DELETE
+	stmt, err := db.Prepare("DELETE FROM cart WHERE cart_id = ?")
+	if err != nil {
+		http.Error(w, `{"error":"Database error"}`, http.StatusInternalServerError)
+		return
+	}
+	defer stmt.Close()
+
+	res, err := stmt.Exec(cartID)
+	if err != nil {
+		http.Error(w, `{"error":"Failed to execute deletion"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// 3. ตรวจสอบว่ามีแถวถูกลบจริงหรือไม่
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		http.Error(w, `{"error":"Failed to check affected rows"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if rowsAffected == 0 {
+		// ถ้าไม่เจอ cart_id นั้นๆ ในตาราง
+		http.Error(w, `{"error":"Cart item not found"}`, http.StatusNotFound)
+		return
+	}
+
+	// 4. ส่ง Response สำเร็จกลับไป
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "Item removed from cart successfully",
+	})
+}
