@@ -75,6 +75,10 @@ func main() {
 	http.HandleFunc("/searchgames", withCORS(searchGames))                          // ค้นหาเกม/ Knn
 	http.HandleFunc("/user-library", withCORS(getUserLibraryHandler))               // ดึงคลังเกมของผู้ใช้
 
+	http.HandleFunc("/addcart", withCORS(addToCart))
+	http.HandleFunc("/getcart", withCORS(getCartItems))
+	http.HandleFunc("/cartremove", withCORS(removeFromCart))
+
 	// หา IP ของเครื่อง
 	ip := getLocalIP()
 	// url := fmt.Sprintf("http://%s:8080/user", ip)
