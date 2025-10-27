@@ -339,7 +339,7 @@ func withCORS(h http.HandlerFunc) http.HandlerFunc {
 			"http://localhost:4200",
 			"http://localhost:3000",
 			"http://localhost:51560",
-			"https://big-game-460e6.web.app/", // ใส่ domain ของ frontend production ตรงนี้
+			"https://big-game-460e6.web.app", // ใส่ domain ของ frontend production ตรงนี้
 		}
 
 		// ตรวจสอบว่า origin ที่ส่งมาถูก whitelist ไว้หรือไม่
