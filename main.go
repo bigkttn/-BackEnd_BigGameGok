@@ -74,7 +74,6 @@ func main() {
 	http.HandleFunc("/buygame", withCORS(buyGame))                                  // ซื้อเกม
 	http.HandleFunc("/searchgames", withCORS(searchGames))                          // ค้นหาเกม/ Knn
 	http.HandleFunc("/user-library", withCORS(getUserLibraryHandler))               // ดึงคลังเกมของผู้ใช้
-
 	http.HandleFunc("/addcart", withCORS(addToCart))
 	http.HandleFunc("/getcart", withCORS(getCartItems))
 	http.HandleFunc("/cartremove", withCORS(removeFromCart))
@@ -340,7 +339,7 @@ func withCORS(h http.HandlerFunc) http.HandlerFunc {
 			"http://localhost:4200",
 			"http://localhost:3000",
 			"http://localhost:51560",
-			"https://your-frontend-domain.com", // ใส่ domain ของ frontend production ตรงนี้
+			"https://big-game-460e6.web.app/", // ใส่ domain ของ frontend production ตรงนี้
 		}
 
 		// ตรวจสอบว่า origin ที่ส่งมาถูก whitelist ไว้หรือไม่
